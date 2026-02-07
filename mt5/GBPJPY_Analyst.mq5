@@ -250,30 +250,26 @@ string CaptureTimeframeScreenshot(ENUM_TIMEFRAMES tf, string tfLabel)
 
    //--- Open a temporary chart
    long chartId = ChartOpen(_Symbol, tf);
-   if(chartId == 0)
+   if(chartId <= 0)
    {
-      Print("ERROR: Failed to open temporary chart for ", tfLabel);
+      Print("ERROR: Failed to open temporary chart for ", tfLabel, " (error ", GetLastError(), ")");
       return "";
    }
 
-   //--- Configure the chart for clean screenshots
+   Print("Opened temp chart ", chartId, " for ", tfLabel);
+
+   //--- Prevent temp chart from stealing focus from main chart
+   ChartSetInteger(chartId, CHART_BRING_TO_TOP, false);
+
+   //--- Configure the chart for clean screenshots (only on temp chart)
    ChartSetInteger(chartId, CHART_MODE, CHART_CANDLES);
    ChartSetInteger(chartId, CHART_SHOW_GRID, false);
    ChartSetInteger(chartId, CHART_SHOW_VOLUMES, false);
    ChartSetInteger(chartId, CHART_SHOW_OBJECT_DESCR, false);
    ChartSetInteger(chartId, CHART_AUTOSCROLL, true);
    ChartSetInteger(chartId, CHART_SHIFT, true);
-   ChartSetInteger(chartId, CHART_COLOR_BACKGROUND, clrBlack);
-   ChartSetInteger(chartId, CHART_COLOR_FOREGROUND, clrWhite);
-   ChartSetInteger(chartId, CHART_COLOR_CANDLE_BULL, clrLime);
-   ChartSetInteger(chartId, CHART_COLOR_CANDLE_BEAR, clrRed);
-   ChartSetInteger(chartId, CHART_COLOR_CHART_UP, clrLime);
-   ChartSetInteger(chartId, CHART_COLOR_CHART_DOWN, clrRed);
 
-   //--- Set visible bars to ~50 candles
-   ChartSetInteger(chartId, CHART_WIDTH_IN_BARS, 55);
-
-   //--- Wait for chart to render
+   //--- Wait for chart data to load, then apply visuals and screenshot
    ChartRedraw(chartId);
    Sleep(2000);
    ChartRedraw(chartId);
@@ -282,7 +278,7 @@ string CaptureTimeframeScreenshot(ENUM_TIMEFRAMES tf, string tfLabel)
    //--- Take screenshot
    bool success = ChartScreenShot(chartId, filename, InpScreenshotWidth, InpScreenshotHeight);
 
-   //--- Close temporary chart
+   //--- Always close temporary chart
    ChartClose(chartId);
 
    if(!success)
@@ -403,90 +399,103 @@ string GetOHLCArray(ENUM_TIMEFRAMES tf, int count)
 }
 
 //+------------------------------------------------------------------+
+//| Helper: append a string to a char array (no null terminator)       |
+//+------------------------------------------------------------------+
+void AppendStringToBody(char &body[], string text)
+{
+   uchar tmp[];
+   StringToCharArray(text, tmp, 0, WHOLE_ARRAY, CP_UTF8);
+   int len = ArraySize(tmp) - 1; // strip null terminator
+   if(len <= 0) return;
+
+   int pos = ArraySize(body);
+   ArrayResize(body, pos + len);
+   for(int i = 0; i < len; i++)
+      body[pos + i] = (char)tmp[i];
+}
+
+//+------------------------------------------------------------------+
+//| Helper: append binary bytes to a char array                        |
+//+------------------------------------------------------------------+
+void AppendBinaryToBody(char &body[], uchar &bin[], int binSize)
+{
+   int pos = ArraySize(body);
+   ArrayResize(body, pos + binSize);
+   for(int i = 0; i < binSize; i++)
+      body[pos + i] = (char)bin[i];
+}
+
+//+------------------------------------------------------------------+
 //| Send data to Python server via multipart POST                      |
 //+------------------------------------------------------------------+
 bool SendToServer(string fileH1, string fileM15, string fileM5, string &jsonData)
 {
-   //--- Build multipart form data
-   string boundary = "----GBPJPY" + IntegerToString(GetTickCount());
-   string contentType = "multipart/form-data; boundary=" + boundary;
+   string boundary = "----GBPJPYBound" + IntegerToString(GetTickCount());
 
-   //--- Build the request body
-   uchar postData[];
+   //--- Build multipart body using char[] (what WebRequest expects)
+   char postData[];
 
-   //--- Add JSON field
-   AppendMultipartField(postData, boundary, "market_data", jsonData);
+   //--- Part 1: market_data (text form field — no Content-Type header)
+   AppendStringToBody(postData, "--" + boundary + "\r\n");
+   AppendStringToBody(postData, "Content-Disposition: form-data; name=\"market_data\"\r\n");
+   AppendStringToBody(postData, "\r\n");
+   AppendStringToBody(postData, jsonData);
 
-   //--- Add screenshot files
-   AppendMultipartFile(postData, boundary, "screenshot_h1", fileH1, "image/png");
-   AppendMultipartFile(postData, boundary, "screenshot_m15", fileM15, "image/png");
-   AppendMultipartFile(postData, boundary, "screenshot_m5", fileM5, "image/png");
+   //--- Part 2-4: screenshot files
+   AppendFilePart(postData, boundary, "screenshot_h1", fileH1);
+   AppendFilePart(postData, boundary, "screenshot_m15", fileM15);
+   AppendFilePart(postData, boundary, "screenshot_m5", fileM5);
 
-   //--- Add closing boundary
-   string closingBound = "\r\n--" + boundary + "--\r\n";
-   uchar closingBytes[];
-   StringToCharArray(closingBound, closingBytes, 0, WHOLE_ARRAY, CP_UTF8);
-   int closingLen = ArraySize(closingBytes) - 1; // strip null terminator
-   int closingStart = ArraySize(postData);
-   ArrayResize(postData, closingStart + closingLen);
-   ArrayCopy(postData, closingBytes, closingStart, 0, closingLen);
+   //--- Closing boundary
+   AppendStringToBody(postData, "\r\n--" + boundary + "--\r\n");
 
    //--- Prepare headers
-   string headers = "Content-Type: " + contentType + "\r\n";
+   string headers = "Content-Type: multipart/form-data; boundary=" + boundary + "\r\n";
 
    //--- Send the request
    char   result[];
    string resultHeaders;
-   int timeout = 30000; // 30 second timeout
+   int timeout = 60000; // 60 second timeout
 
-   Print("Sending data to ", InpServerURL, " (", ArraySize(postData), " bytes)...");
+   Print("Sending to ", InpServerURL, " (", ArraySize(postData), " bytes)...");
 
    int res = WebRequest("POST", InpServerURL, headers, timeout, postData, result, resultHeaders);
 
    if(res == -1)
    {
       int error = GetLastError();
-      Print("ERROR: WebRequest failed (error ", error, ")");
+      Print("ERROR: WebRequest failed (error code ", error, ")");
       if(error == 4014)
-         Print("ERROR: URL not allowed. Add '", InpServerURL, "' to Tools > Options > Expert Advisors > Allowed URLs");
+         Print("ERROR: URL not in allowed list. Add '", InpServerURL, "' to Tools > Options > Expert Advisors > Allowed URLs");
+      else if(error == 4060)
+         Print("ERROR: No connection to server. Is the server running at ", InpServerURL, "?");
+      else
+         Print("ERROR: WebRequest error ", error, ". Check URL and network.");
       return false;
    }
 
    string response = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
    Print("Server response (HTTP ", res, "): ", response);
 
+   if(res != 200)
+   {
+      Print("ERROR: Server returned HTTP ", res, " (expected 200).");
+      Print("Response headers: ", resultHeaders);
+   }
+
    return (res == 200);
 }
 
 //+------------------------------------------------------------------+
-//| Append a text field to multipart form data                         |
+//| Append a file part to the multipart body                           |
 //+------------------------------------------------------------------+
-void AppendMultipartField(uchar &data[], string boundary, string fieldName, string &value)
-{
-   string part = "\r\n--" + boundary + "\r\n";
-   part += "Content-Disposition: form-data; name=\"" + fieldName + "\"\r\n";
-   part += "Content-Type: application/json\r\n\r\n";
-   part += value;
-
-   uchar partBytes[];
-   StringToCharArray(part, partBytes, 0, WHOLE_ARRAY, CP_UTF8);
-   int partLen = ArraySize(partBytes) - 1; // strip null terminator
-
-   int currentSize = ArraySize(data);
-   ArrayResize(data, currentSize + partLen);
-   ArrayCopy(data, partBytes, currentSize, 0, partLen);
-}
-
-//+------------------------------------------------------------------+
-//| Append a file to multipart form data                               |
-//+------------------------------------------------------------------+
-void AppendMultipartFile(uchar &data[], string boundary, string fieldName, string filename, string mimeType)
+void AppendFilePart(char &body[], string boundary, string fieldName, string filepath)
 {
    //--- Read the file
-   int fileHandle = FileOpen(filename, FILE_READ|FILE_BIN);
+   int fileHandle = FileOpen(filepath, FILE_READ|FILE_BIN);
    if(fileHandle == INVALID_HANDLE)
    {
-      Print("ERROR: Cannot open file ", filename, " for reading");
+      Print("ERROR: Cannot open file ", filepath, " for reading (error ", GetLastError(), ")");
       return;
    }
 
@@ -496,26 +505,24 @@ void AppendMultipartFile(uchar &data[], string boundary, string fieldName, strin
    FileReadArray(fileHandle, fileData, 0, fileSize);
    FileClose(fileHandle);
 
-   //--- Build part header
-   string shortName = filename;
-   int lastSlash = StringFind(filename, "\\");
-   while(lastSlash >= 0)
+   Print("Read file ", filepath, " (", fileSize, " bytes)");
+
+   //--- Extract just the filename from the path
+   string shortName = filepath;
+   int slashPos = StringFind(filepath, "\\");
+   while(slashPos >= 0)
    {
-      shortName = StringSubstr(filename, lastSlash + 1);
-      lastSlash = StringFind(filename, "\\", lastSlash + 1);
+      shortName = StringSubstr(filepath, slashPos + 1);
+      slashPos = StringFind(filepath, "\\", slashPos + 1);
    }
 
-   string partHeader = "\r\n--" + boundary + "\r\n";
-   partHeader += "Content-Disposition: form-data; name=\"" + fieldName + "\"; filename=\"" + shortName + "\"\r\n";
-   partHeader += "Content-Type: " + mimeType + "\r\n\r\n";
+   //--- Boundary separator + part headers
+   AppendStringToBody(body, "\r\n--" + boundary + "\r\n");
+   AppendStringToBody(body, "Content-Disposition: form-data; name=\"" + fieldName + "\"; filename=\"" + shortName + "\"\r\n");
+   AppendStringToBody(body, "Content-Type: image/png\r\n");
+   AppendStringToBody(body, "\r\n");
 
-   uchar headerBytes[];
-   StringToCharArray(partHeader, headerBytes, 0, WHOLE_ARRAY, CP_UTF8);
-   int headerLen = ArraySize(headerBytes) - 1; // strip null terminator
-
-   int currentSize = ArraySize(data);
-   ArrayResize(data, currentSize + headerLen + fileSize);
-   ArrayCopy(data, headerBytes, currentSize, 0, headerLen);
-   ArrayCopy(data, fileData, currentSize + headerLen);
+   //--- Binary file content
+   AppendBinaryToBody(body, fileData, fileSize);
 }
 //+------------------------------------------------------------------+
