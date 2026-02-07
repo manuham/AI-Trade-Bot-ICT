@@ -280,9 +280,38 @@ string CaptureTimeframeScreenshot(ENUM_TIMEFRAMES tf, string tfLabel)
    //--- Prevent temp chart from stealing focus from main chart
    ChartSetInteger(chartId, CHART_BRING_TO_TOP, false);
 
-   //--- Apply saved chart template (copies colors, scale, indicators, grid settings)
-   if(!ChartApplyTemplate(chartId, "analyst.tpl"))
-      Print("WARNING: Failed to apply analyst.tpl template (error ", GetLastError(), "). Using defaults.");
+   //--- General: Candle chart, shift, autoscroll
+   ChartSetInteger(chartId, CHART_MODE, CHART_CANDLES);
+   ChartSetInteger(chartId, CHART_SHIFT, true);
+   ChartSetInteger(chartId, CHART_AUTOSCROLL, true);
+
+   //--- Show: ALL options off (clean chart for analysis)
+   ChartSetInteger(chartId, CHART_SHOW_TICKER, false);
+   ChartSetInteger(chartId, CHART_SHOW_OHLC, false);
+   ChartSetInteger(chartId, CHART_SHOW_BID_LINE, false);
+   ChartSetInteger(chartId, CHART_SHOW_ASK_LINE, false);
+   ChartSetInteger(chartId, CHART_SHOW_LAST_LINE, false);
+   ChartSetInteger(chartId, CHART_SHOW_PERIOD_SEP, false);
+   ChartSetInteger(chartId, CHART_SHOW_GRID, false);
+   ChartSetInteger(chartId, CHART_SHOW_VOLUMES, CHART_VOLUME_HIDE);
+   ChartSetInteger(chartId, CHART_SHOW_OBJECT_DESCR, false);
+   ChartSetInteger(chartId, CHART_SHOW_TRADE_LEVELS, false);
+   ChartSetInteger(chartId, CHART_SHOW_TRADE_HISTORY, false);
+
+   //--- Colors matching user's chart layout
+   ChartSetInteger(chartId, CHART_COLOR_BACKGROUND, clrSilver);
+   ChartSetInteger(chartId, CHART_COLOR_FOREGROUND, clrBlack);
+   ChartSetInteger(chartId, CHART_COLOR_GRID, clrSilver);
+   ChartSetInteger(chartId, CHART_COLOR_CHART_UP, clrDimGray);        // Bar up
+   ChartSetInteger(chartId, CHART_COLOR_CHART_DOWN, clrBlack);        // Bar down
+   ChartSetInteger(chartId, CHART_COLOR_CANDLE_BULL, C'0,63,210');    // Candle bull (blue)
+   ChartSetInteger(chartId, CHART_COLOR_CANDLE_BEAR, clrBlack);       // Candle bear
+   ChartSetInteger(chartId, CHART_COLOR_CHART_LINE, clrBlack);        // Line chart
+   ChartSetInteger(chartId, CHART_COLOR_VOLUME, clrGreen);
+   ChartSetInteger(chartId, CHART_COLOR_BID, clrBlack);
+   ChartSetInteger(chartId, CHART_COLOR_ASK, clrBlack);
+   ChartSetInteger(chartId, CHART_COLOR_LAST, clrBlack);
+   ChartSetInteger(chartId, CHART_COLOR_STOP_LEVEL, clrOrangeRed);
 
    //--- Wait for chart data to load and template to render
    ChartRedraw(chartId);
