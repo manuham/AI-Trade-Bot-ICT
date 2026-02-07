@@ -164,19 +164,34 @@ bool IsCooldownElapsed()
 //+------------------------------------------------------------------+
 void CreateManualButton()
 {
-   //--- Create button background
-   ObjectCreate(0, "btnManualScan", OBJ_BUTTON, 0, 0, 0);
+   //--- Remove if already exists (e.g. reloading EA)
+   ObjectDelete(0, "btnManualScan");
+
+   //--- Create button
+   if(!ObjectCreate(0, "btnManualScan", OBJ_BUTTON, 0, 0, 0))
+   {
+      Print("WARNING: Failed to create scan button (error ", GetLastError(), ")");
+      return;
+   }
+   ObjectSetInteger(0, "btnManualScan", OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, "btnManualScan", OBJPROP_XDISTANCE, 10);
-   ObjectSetInteger(0, "btnManualScan", OBJPROP_YDISTANCE, 30);
-   ObjectSetInteger(0, "btnManualScan", OBJPROP_XSIZE, 160);
-   ObjectSetInteger(0, "btnManualScan", OBJPROP_YSIZE, 35);
+   ObjectSetInteger(0, "btnManualScan", OBJPROP_YDISTANCE, 50);
+   ObjectSetInteger(0, "btnManualScan", OBJPROP_XSIZE, 170);
+   ObjectSetInteger(0, "btnManualScan", OBJPROP_YSIZE, 40);
    ObjectSetString(0, "btnManualScan", OBJPROP_TEXT, "  Scan GBPJPY  ");
+   ObjectSetString(0, "btnManualScan", OBJPROP_FONT, "Arial Bold");
+   ObjectSetInteger(0, "btnManualScan", OBJPROP_FONTSIZE, 12);
    ObjectSetInteger(0, "btnManualScan", OBJPROP_COLOR, clrWhite);
    ObjectSetInteger(0, "btnManualScan", OBJPROP_BGCOLOR, clrDodgerBlue);
-   ObjectSetInteger(0, "btnManualScan", OBJPROP_BORDER_COLOR, clrDodgerBlue);
-   ObjectSetInteger(0, "btnManualScan", OBJPROP_FONTSIZE, 11);
-   ObjectSetInteger(0, "btnManualScan", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, "btnManualScan", OBJPROP_BORDER_COLOR, clrRoyalBlue);
+   ObjectSetInteger(0, "btnManualScan", OBJPROP_STATE, false);
    ObjectSetInteger(0, "btnManualScan", OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, "btnManualScan", OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, "btnManualScan", OBJPROP_ZORDER, 100);
+
+   //--- Force chart to redraw so button appears immediately
+   ChartRedraw(0);
+   Print("Scan button created on chart.");
 }
 
 //+------------------------------------------------------------------+
