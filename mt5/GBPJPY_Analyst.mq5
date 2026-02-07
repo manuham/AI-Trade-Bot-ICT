@@ -173,27 +173,36 @@ void CreateManualButton()
 {
    //--- Remove if already exists (e.g. reloading EA)
    ObjectDelete(0, "btnManualScan");
+   ResetLastError();
 
-   //--- Create button
-   if(!ObjectCreate(0, "btnManualScan", OBJ_BUTTON, 0, 0, 0))
+   //--- Create button on chart subwindow 0
+   bool created = ObjectCreate(0, "btnManualScan", OBJ_BUTTON, 0, 0, 0);
+   if(!created)
    {
       Print("WARNING: Failed to create scan button (error ", GetLastError(), ")");
       return;
    }
+
+   //--- Position: top-left corner, below OHLC header
    ObjectSetInteger(0, "btnManualScan", OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, "btnManualScan", OBJPROP_XDISTANCE, 10);
-   ObjectSetInteger(0, "btnManualScan", OBJPROP_YDISTANCE, 50);
-   ObjectSetInteger(0, "btnManualScan", OBJPROP_XSIZE, 170);
-   ObjectSetInteger(0, "btnManualScan", OBJPROP_YSIZE, 40);
-   ObjectSetString(0, "btnManualScan", OBJPROP_TEXT, "  Scan GBPJPY  ");
-   ObjectSetString(0, "btnManualScan", OBJPROP_FONT, "Arial Bold");
-   ObjectSetInteger(0, "btnManualScan", OBJPROP_FONTSIZE, 12);
+   ObjectSetInteger(0, "btnManualScan", OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
+   ObjectSetInteger(0, "btnManualScan", OBJPROP_XDISTANCE, 15);
+   ObjectSetInteger(0, "btnManualScan", OBJPROP_YDISTANCE, 25);
+   ObjectSetInteger(0, "btnManualScan", OBJPROP_XSIZE, 160);
+   ObjectSetInteger(0, "btnManualScan", OBJPROP_YSIZE, 35);
+
+   //--- Appearance
+   ObjectSetString(0,  "btnManualScan", OBJPROP_TEXT, " Scan GBPJPY ");
+   ObjectSetString(0,  "btnManualScan", OBJPROP_FONT, "Arial");
+   ObjectSetInteger(0, "btnManualScan", OBJPROP_FONTSIZE, 10);
    ObjectSetInteger(0, "btnManualScan", OBJPROP_COLOR, clrWhite);
    ObjectSetInteger(0, "btnManualScan", OBJPROP_BGCOLOR, clrDodgerBlue);
-   ObjectSetInteger(0, "btnManualScan", OBJPROP_BORDER_COLOR, clrRoyalBlue);
+   ObjectSetInteger(0, "btnManualScan", OBJPROP_BORDER_COLOR, clrDodgerBlue);
+
+   //--- Behavior
    ObjectSetInteger(0, "btnManualScan", OBJPROP_STATE, false);
+   ObjectSetInteger(0, "btnManualScan", OBJPROP_BACK, false);
    ObjectSetInteger(0, "btnManualScan", OBJPROP_SELECTABLE, false);
-   ObjectSetInteger(0, "btnManualScan", OBJPROP_HIDDEN, true);
    ObjectSetInteger(0, "btnManualScan", OBJPROP_ZORDER, 100);
 
    //--- Force chart to redraw so button appears immediately
