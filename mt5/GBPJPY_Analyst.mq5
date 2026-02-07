@@ -411,7 +411,10 @@ bool SendToServer(string fileH1, string fileM15, string fileM5, string &jsonData
    string closingBound = "\r\n--" + boundary + "--\r\n";
    uchar closingBytes[];
    StringToCharArray(closingBound, closingBytes, 0, WHOLE_ARRAY, CP_UTF8);
-   ArrayCopy(postData, closingBytes, ArraySize(postData));
+   int closingLen = ArraySize(closingBytes) - 1; // strip null terminator
+   int closingStart = ArraySize(postData);
+   ArrayResize(postData, closingStart + closingLen);
+   ArrayCopy(postData, closingBytes, closingStart, 0, closingLen);
 
    //--- Prepare headers
    string headers = "Content-Type: " + contentType + "\r\n";
@@ -452,10 +455,11 @@ void AppendMultipartField(uchar &data[], string boundary, string fieldName, stri
 
    uchar partBytes[];
    StringToCharArray(part, partBytes, 0, WHOLE_ARRAY, CP_UTF8);
+   int partLen = ArraySize(partBytes) - 1; // strip null terminator
 
    int currentSize = ArraySize(data);
-   ArrayResize(data, currentSize + ArraySize(partBytes));
-   ArrayCopy(data, partBytes, currentSize);
+   ArrayResize(data, currentSize + partLen);
+   ArrayCopy(data, partBytes, currentSize, 0, partLen);
 }
 
 //+------------------------------------------------------------------+
@@ -492,10 +496,11 @@ void AppendMultipartFile(uchar &data[], string boundary, string fieldName, strin
 
    uchar headerBytes[];
    StringToCharArray(partHeader, headerBytes, 0, WHOLE_ARRAY, CP_UTF8);
+   int headerLen = ArraySize(headerBytes) - 1; // strip null terminator
 
    int currentSize = ArraySize(data);
-   ArrayResize(data, currentSize + ArraySize(headerBytes) + fileSize);
-   ArrayCopy(data, headerBytes, currentSize);
-   ArrayCopy(data, fileData, currentSize + ArraySize(headerBytes));
+   ArrayResize(data, currentSize + headerLen + fileSize);
+   ArrayCopy(data, headerBytes, currentSize, 0, headerLen);
+   ArrayCopy(data, fileData, currentSize + headerLen);
 }
 //+------------------------------------------------------------------+
