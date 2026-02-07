@@ -264,15 +264,11 @@ string CaptureTimeframeScreenshot(ENUM_TIMEFRAMES tf, string tfLabel)
    //--- Prevent temp chart from stealing focus from main chart
    ChartSetInteger(chartId, CHART_BRING_TO_TOP, false);
 
-   //--- Configure the chart for clean screenshots (only on temp chart)
-   ChartSetInteger(chartId, CHART_MODE, CHART_CANDLES);
-   ChartSetInteger(chartId, CHART_SHOW_GRID, false);
-   ChartSetInteger(chartId, CHART_SHOW_VOLUMES, false);
-   ChartSetInteger(chartId, CHART_SHOW_OBJECT_DESCR, false);
-   ChartSetInteger(chartId, CHART_AUTOSCROLL, true);
-   ChartSetInteger(chartId, CHART_SHIFT, true);
+   //--- Apply saved chart template (copies colors, scale, indicators, grid settings)
+   if(!ChartApplyTemplate(chartId, "analyst.tpl"))
+      Print("WARNING: Failed to apply analyst.tpl template (error ", GetLastError(), "). Using defaults.");
 
-   //--- Wait for chart data to load, then apply visuals and screenshot
+   //--- Wait for chart data to load and template to render
    ChartRedraw(chartId);
    Sleep(2000);
    ChartRedraw(chartId);
