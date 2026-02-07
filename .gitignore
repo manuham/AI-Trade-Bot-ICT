@@ -35,3 +35,6 @@ docker-compose.override.yml
 
 # MT5 compiled files
 *.ex5
+
+# Test artifacts
+test_charts/
