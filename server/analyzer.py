@@ -225,7 +225,7 @@ async def analyze_charts(
         # Extract text from response content blocks
         raw_text = ""
         for block in response.content:
-            if hasattr(block, "text"):
+            if hasattr(block, "text") and block.text is not None:
                 raw_text += block.text
 
         logger.info("Received response from Claude (%d chars)", len(raw_text))
