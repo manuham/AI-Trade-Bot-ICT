@@ -1,0 +1,16 @@
+services:
+  gbpjpy-analyst:
+    build: .
+    container_name: gbpjpy-analyst
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - server/.env
+    volumes:
+      - ./logs:/app/logs
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
