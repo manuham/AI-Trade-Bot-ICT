@@ -13,11 +13,12 @@ from fastapi.responses import JSONResponse
 
 import config
 from analyzer import analyze_charts
-from models import AnalysisResult, MarketData
+from models import AnalysisResult, MarketData, PendingTrade, TradeExecutionReport
 from telegram_bot import (
     create_bot_app,
     get_bot_app,
     send_analysis,
+    send_trade_confirmation,
     set_scan_callback,
     store_analysis,
 )
@@ -38,6 +39,27 @@ _last_screenshots: dict[str, bytes] = {}
 _last_market_data: Optional[MarketData] = None
 _last_result: Optional[AnalysisResult] = None
 _analysis_lock = asyncio.Lock()
+
+# Trade execution queue — one pending trade at a time
+_pending_trade: Optional[PendingTrade] = None
+
+
+def queue_pending_trade(trade: PendingTrade):
+    """Called by telegram_bot when Execute is pressed."""
+    global _pending_trade
+    _pending_trade = trade
+    logger.info("Trade queued for MT5: %s %s", trade.bias.upper(), trade.id)
+
+
+def get_pending_trade() -> Optional[PendingTrade]:
+    """Return current pending trade (or None)."""
+    return _pending_trade
+
+
+def clear_pending_trade():
+    """Remove the pending trade after MT5 picks it up."""
+    global _pending_trade
+    _pending_trade = None
 
 
 async def _run_scan_from_telegram():
@@ -89,6 +111,9 @@ async def lifespan(app: FastAPI):
     try:
         bot_app = create_bot_app()
         set_scan_callback(_run_scan_from_telegram)
+        # Give telegram_bot access to the trade queue
+        from telegram_bot import set_trade_queue_callback
+        set_trade_queue_callback(queue_pending_trade)
         await bot_app.initialize()
         await bot_app.start()
         if bot_app.updater:
@@ -208,6 +233,35 @@ async def manual_scan():
         status_code=404,
         content={"error": "No data available. Send screenshots from MT5 first."},
     )
+
+
+@app.get("/pending_trade")
+async def pending_trade():
+    """MT5 EA polls this to check for trades to execute."""
+    trade = get_pending_trade()
+    if trade:
+        return {"pending": True, "trade": trade.model_dump()}
+    return {"pending": False}
+
+
+@app.post("/trade_executed")
+async def trade_executed(report: TradeExecutionReport):
+    """MT5 EA calls this after placing a trade."""
+    logger.info(
+        "Trade execution report: id=%s status=%s",
+        report.trade_id,
+        report.status,
+    )
+    clear_pending_trade()
+
+    # Send confirmation to Telegram
+    try:
+        await send_trade_confirmation(report)
+        logger.info("Trade confirmation sent to Telegram")
+    except Exception as e:
+        logger.error("Failed to send trade confirmation: %s", e)
+
+    return {"status": "ok", "message": "Execution report received"}
 
 
 @app.post("/webhook/telegram")

@@ -6,11 +6,14 @@
 //+------------------------------------------------------------------+
 #property copyright "GBPJPY AI Trade Analyst Bot"
 #property link      ""
-#property version   "1.00"
+#property version   "2.00"
 #property strict
 
+#include <Trade\Trade.mqh>
+
 //--- Input parameters
-input string   InpServerURL       = "http://127.0.0.1:8000/analyze"; // Server URL
+input string   InpServerURL       = "http://127.0.0.1:8000/analyze"; // Server URL (analyze endpoint)
+input string   InpServerBase      = "http://127.0.0.1:8000";         // Server Base URL
 input int      InpLondonOpenHour  = 8;      // London Open Hour (CET)
 input int      InpLondonOpenMin   = 0;      // London Open Minute
 input int      InpNYOpenHour      = 14;     // NY Open Hour (CET)
@@ -20,6 +23,8 @@ input int      InpCooldownMinutes = 30;     // Cooldown after scan (minutes)
 input int      InpScreenshotWidth = 1920;   // Screenshot Width
 input int      InpScreenshotHeight= 1080;   // Screenshot Height
 input bool     InpManualTrigger   = false;  // Manual Trigger (set true to force scan)
+input double   InpRiskPercent     = 1.0;    // Risk % per trade
+input int      InpMagicNumber     = 888888; // Magic Number for trades
 
 //--- Global variables
 datetime g_lastScanTime = 0;
@@ -27,16 +32,25 @@ bool     g_londonScanned = false;
 bool     g_nyScanned     = false;
 int      g_lastDay       = 0;
 string   g_screenshotDir;
+datetime g_lastPollTime  = 0;
+
+//--- Trade object
+CTrade g_trade;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                     |
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   Print(">>> HELLO WORLD - Version 2026.02.07 <<<");
+   Print(">>> GBPJPY Analyst v2.0 - Trade Execution Enabled <<<");
 
    //--- Set up screenshot directory
    g_screenshotDir = "GBPJPY_Analyst";
+
+   //--- Configure trade object
+   g_trade.SetExpertMagicNumber(InpMagicNumber);
+   g_trade.SetDeviationInPoints(30);  // 3 pips slippage for GBPJPY
+   g_trade.SetTypeFilling(ORDER_FILLING_IOC);
 
    //--- Create timer for checking every 10 seconds
    EventSetTimer(10);
@@ -137,6 +151,13 @@ void OnTimer()
          if(RunAnalysis("NY"))
             g_nyScanned = true;
       }
+   }
+
+   //--- Poll for pending trades every 10 seconds
+   if(TimeCurrent() - g_lastPollTime >= 10)
+   {
+      g_lastPollTime = TimeCurrent();
+      PollPendingTrade();
    }
 }
 
@@ -563,8 +584,282 @@ bool SendToServer(string fileH1, string fileM15, string fileM5, string &jsonData
 }
 
 //+------------------------------------------------------------------+
-//| Append a file part to the multipart body                           |
+//| Poll server for pending trades                                     |
 //+------------------------------------------------------------------+
+void PollPendingTrade()
+{
+   string url = InpServerBase + "/pending_trade";
+   char   postData[];  // empty — this is GET
+   char   result[];
+   string resultHeaders;
+   string headers = "";
+
+   int res = WebRequest("GET", url, headers, 5000, postData, result, resultHeaders);
+   if(res != 200)
+      return;  // silently ignore — no spam in logs for routine polling
+
+   string response = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+
+   //--- Quick check: does response contain a pending trade?
+   if(StringFind(response, "\"pending\": true") < 0 &&
+      StringFind(response, "\"pending\":true") < 0)
+      return;
+
+   Print("=== Pending trade found! ===");
+   Print("Trade data: ", response);
+
+   //--- Parse trade fields from JSON
+   string tradeId    = JsonGetString(response, "id");
+   string bias       = JsonGetString(response, "bias");
+   double entryMin   = JsonGetDouble(response, "entry_min");
+   double entryMax   = JsonGetDouble(response, "entry_max");
+   double stopLoss   = JsonGetDouble(response, "stop_loss");
+   double tp1        = JsonGetDouble(response, "tp1");
+   double tp2        = JsonGetDouble(response, "tp2");
+   double slPips     = JsonGetDouble(response, "sl_pips");
+
+   if(tradeId == "" || bias == "")
+   {
+      Print("ERROR: Failed to parse pending trade JSON");
+      return;
+   }
+
+   //--- Execute the trade
+   ExecuteTrade(tradeId, bias, entryMin, entryMax, stopLoss, tp1, tp2, slPips);
+}
+
+//+------------------------------------------------------------------+
+//| Execute trade with split lots (50% TP1, 50% TP2)                   |
+//+------------------------------------------------------------------+
+void ExecuteTrade(string tradeId, string bias, double entryMin, double entryMax,
+                  double stopLoss, double tp1, double tp2, double slPips)
+{
+   Print("Executing trade: ", bias, " ID=", tradeId);
+
+   //--- Calculate lot size based on risk
+   double totalLots = CalculateLotSize(slPips);
+   if(totalLots <= 0)
+   {
+      Print("ERROR: Lot size calculation failed");
+      SendExecutionReport(tradeId, 0, 0, 0, 0, 0, 0, 0, 0, "failed", "Lot size calculation failed");
+      return;
+   }
+
+   //--- Split into two positions: 50% TP1, 50% TP2
+   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   double minLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double maxLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+
+   double lotsTP1 = MathFloor((totalLots * 0.5) / lotStep) * lotStep;
+   double lotsTP2 = MathFloor((totalLots * 0.5) / lotStep) * lotStep;
+
+   //--- Ensure minimum lot size
+   if(lotsTP1 < minLot) lotsTP1 = minLot;
+   if(lotsTP2 < minLot) lotsTP2 = minLot;
+
+   //--- Cap at max
+   if(lotsTP1 > maxLot) lotsTP1 = maxLot;
+   if(lotsTP2 > maxLot) lotsTP2 = maxLot;
+
+   Print("Lot size: total=", DoubleToString(totalLots, 2),
+         " TP1=", DoubleToString(lotsTP1, 2),
+         " TP2=", DoubleToString(lotsTP2, 2));
+
+   //--- Place orders
+   ENUM_ORDER_TYPE orderType;
+   double price;
+
+   if(bias == "long")
+   {
+      orderType = ORDER_TYPE_BUY;
+      price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   }
+   else
+   {
+      orderType = ORDER_TYPE_SELL;
+      price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   }
+
+   //--- Position 1: TP1 (close 50%)
+   string comment1 = "AI_" + tradeId + "_TP1";
+   bool ok1 = g_trade.PositionOpen(_Symbol, orderType, lotsTP1, price, stopLoss, tp1, comment1);
+   ulong ticket1 = ok1 ? g_trade.ResultOrder() : 0;
+   double actualEntry1 = ok1 ? g_trade.ResultPrice() : 0;
+
+   if(!ok1)
+   {
+      Print("ERROR: TP1 order failed: ", g_trade.ResultRetcodeDescription());
+      SendExecutionReport(tradeId, 0, 0, 0, 0, 0, 0, 0, 0, "failed",
+                          "TP1 order failed: " + g_trade.ResultRetcodeDescription());
+      return;
+   }
+   Print("TP1 order placed: ticket=", ticket1, " lots=", lotsTP1, " entry=", actualEntry1);
+
+   //--- Position 2: TP2 (runner 50%)
+   //--- Re-fetch price in case of slight movement
+   if(bias == "long")
+      price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   else
+      price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+
+   string comment2 = "AI_" + tradeId + "_TP2";
+   bool ok2 = g_trade.PositionOpen(_Symbol, orderType, lotsTP2, price, stopLoss, tp2, comment2);
+   ulong ticket2 = ok2 ? g_trade.ResultOrder() : 0;
+   double actualEntry2 = ok2 ? g_trade.ResultPrice() : 0;
+
+   if(!ok2)
+   {
+      Print("WARNING: TP2 order failed: ", g_trade.ResultRetcodeDescription());
+      // TP1 was placed, report partial execution
+      SendExecutionReport(tradeId, (int)ticket1, 0, lotsTP1, 0,
+                          actualEntry1, stopLoss, tp1, 0, "executed",
+                          "TP2 failed: " + g_trade.ResultRetcodeDescription());
+      return;
+   }
+   Print("TP2 order placed: ticket=", ticket2, " lots=", lotsTP2, " entry=", actualEntry2);
+
+   //--- Both positions placed successfully
+   Print("=== Trade fully executed: ", bias, " ", DoubleToString(lotsTP1 + lotsTP2, 2), " lots ===");
+   SendExecutionReport(tradeId, (int)ticket1, (int)ticket2, lotsTP1, lotsTP2,
+                       actualEntry1, stopLoss, tp1, tp2, "executed", "");
+}
+
+//+------------------------------------------------------------------+
+//| Calculate lot size from risk % and SL pips                         |
+//+------------------------------------------------------------------+
+double CalculateLotSize(double slPips)
+{
+   double balance    = AccountInfoDouble(ACCOUNT_BALANCE);
+   double riskAmount = balance * InpRiskPercent / 100.0;
+
+   //--- Get tick value: how much 1 pip move costs per 1 lot
+   double tickSize  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double point     = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+
+   if(tickSize == 0 || slPips == 0)
+      return 0;
+
+   //--- For GBPJPY: 1 pip = 0.01 (10 points), tickSize is usually 0.001
+   double pipValue = (0.01 / tickSize) * tickValue;  // value of 1 pip per 1 lot
+
+   double lots = riskAmount / (slPips * pipValue);
+
+   //--- Normalize to lot step
+   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   double minLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double maxLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+
+   lots = MathFloor(lots / lotStep) * lotStep;
+   if(lots < minLot) lots = minLot;
+   if(lots > maxLot) lots = maxLot;
+
+   Print("Risk calc: balance=", DoubleToString(balance, 2),
+         " risk$=", DoubleToString(riskAmount, 2),
+         " slPips=", DoubleToString(slPips, 1),
+         " pipValue=", DoubleToString(pipValue, 4),
+         " lots=", DoubleToString(lots, 2));
+
+   return lots;
+}
+
+//+------------------------------------------------------------------+
+//| Send execution report back to server                               |
+//+------------------------------------------------------------------+
+void SendExecutionReport(string tradeId, int ticket1, int ticket2,
+                         double lots1, double lots2, double entry,
+                         double sl, double actualTp1, double actualTp2,
+                         string status, string errorMsg)
+{
+   string url = InpServerBase + "/trade_executed";
+
+   //--- Build JSON body
+   string json = "{";
+   json += "\"trade_id\":\"" + tradeId + "\",";
+   json += "\"ticket_tp1\":" + IntegerToString(ticket1) + ",";
+   json += "\"ticket_tp2\":" + IntegerToString(ticket2) + ",";
+   json += "\"lots_tp1\":" + DoubleToString(lots1, 2) + ",";
+   json += "\"lots_tp2\":" + DoubleToString(lots2, 2) + ",";
+   json += "\"actual_entry\":" + DoubleToString(entry, 3) + ",";
+   json += "\"actual_sl\":" + DoubleToString(sl, 3) + ",";
+   json += "\"actual_tp1\":" + DoubleToString(actualTp1, 3) + ",";
+   json += "\"actual_tp2\":" + DoubleToString(actualTp2, 3) + ",";
+   json += "\"status\":\"" + status + "\",";
+   json += "\"error_message\":\"" + errorMsg + "\"";
+   json += "}";
+
+   char postData[];
+   StringToCharArray(json, postData, 0, WHOLE_ARRAY, CP_UTF8);
+   // Strip null terminator
+   ArrayResize(postData, ArraySize(postData) - 1);
+
+   char   result[];
+   string resultHeaders;
+   string headers = "Content-Type: application/json\r\n";
+
+   int res = WebRequest("POST", url, headers, 10000, postData, result, resultHeaders);
+   if(res == 200)
+      Print("Execution report sent to server: ", status);
+   else
+      Print("WARNING: Failed to send execution report (HTTP ", res, ")");
+}
+
+//+------------------------------------------------------------------+
+//| Simple JSON string parser — extract string value by key            |
+//+------------------------------------------------------------------+
+string JsonGetString(string json, string key)
+{
+   string search = "\"" + key + "\"";
+   int pos = StringFind(json, search);
+   if(pos < 0) return "";
+
+   // Find the colon after the key
+   pos = StringFind(json, ":", pos + StringLen(search));
+   if(pos < 0) return "";
+
+   // Find opening quote
+   int start = StringFind(json, "\"", pos + 1);
+   if(start < 0) return "";
+
+   // Find closing quote
+   int end = StringFind(json, "\"", start + 1);
+   if(end < 0) return "";
+
+   return StringSubstr(json, start + 1, end - start - 1);
+}
+
+//+------------------------------------------------------------------+
+//| Simple JSON double parser — extract numeric value by key           |
+//+------------------------------------------------------------------+
+double JsonGetDouble(string json, string key)
+{
+   string search = "\"" + key + "\"";
+   int pos = StringFind(json, search);
+   if(pos < 0) return 0;
+
+   // Find the colon
+   pos = StringFind(json, ":", pos + StringLen(search));
+   if(pos < 0) return 0;
+
+   // Skip whitespace
+   pos++;
+   while(pos < StringLen(json) && StringGetCharacter(json, pos) == ' ')
+      pos++;
+
+   // Find end of number (comma, } or whitespace)
+   int end = pos;
+   while(end < StringLen(json))
+   {
+      ushort ch = StringGetCharacter(json, end);
+      if(ch == ',' || ch == '}' || ch == ' ' || ch == '\n' || ch == '\r')
+         break;
+      end++;
+   }
+
+   string numStr = StringSubstr(json, pos, end - pos);
+   return StringToDouble(numStr);
+}
+
 void AppendFilePart(char &body[], string boundary, string fieldName, string filepath)
 {
    //--- Read the file

@@ -59,3 +59,31 @@ class AnalysisResult(BaseModel):
     fundamental_bias: str = "neutral"
     upcoming_events: list[str] = []
     raw_response: str = ""
+
+
+class PendingTrade(BaseModel):
+    """A trade approved via Telegram Execute button, waiting for MT5 pickup."""
+    id: str
+    bias: str  # "long" or "short"
+    entry_min: float
+    entry_max: float
+    stop_loss: float
+    tp1: float
+    tp2: float
+    sl_pips: float
+    confidence: str
+
+
+class TradeExecutionReport(BaseModel):
+    """Confirmation from MT5 EA after trade is placed."""
+    trade_id: str
+    ticket_tp1: int = 0
+    ticket_tp2: int = 0
+    lots_tp1: float = 0.0
+    lots_tp2: float = 0.0
+    actual_entry: float = 0.0
+    actual_sl: float = 0.0
+    actual_tp1: float = 0.0
+    actual_tp2: float = 0.0
+    status: str = "executed"  # "executed" or "failed"
+    error_message: str = ""

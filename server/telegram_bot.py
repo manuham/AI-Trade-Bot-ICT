@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -13,7 +14,7 @@ from telegram.ext import (
 )
 
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-from models import AnalysisResult, TradeSetup
+from models import AnalysisResult, PendingTrade, TradeExecutionReport, TradeSetup
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +23,19 @@ _app: Optional[Application] = None
 _last_analysis: Optional[AnalysisResult] = None
 _last_scan_time: Optional[datetime] = None
 _scan_callback = None  # Set by main.py to trigger analysis
+_trade_queue_callback = None  # Set by main.py to queue trades for MT5
 
 
 def set_scan_callback(callback):
     """Register the function to call when /scan is invoked."""
     global _scan_callback
     _scan_callback = callback
+
+
+def set_trade_queue_callback(callback):
+    """Register the function to queue a trade for MT5 execution."""
+    global _trade_queue_callback
+    _trade_queue_callback = callback
 
 
 def store_analysis(result: AnalysisResult):
@@ -152,12 +160,44 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
     if data.startswith("execute_"):
-        idx = data.split("_")[1]
+        idx = int(data.split("_")[1])
         await query.edit_message_reply_markup(reply_markup=None)
-        await query.message.reply_text(
-            "\u2705 Trade noted \u2014 execute via TradePanel on MT5"
-        )
+
+        # Queue the trade for MT5 pickup
+        if _last_analysis and 0 <= idx < len(_last_analysis.setups):
+            setup = _last_analysis.setups[idx]
+            trade_id = uuid.uuid4().hex[:8]
+            pending = PendingTrade(
+                id=trade_id,
+                bias=setup.bias,
+                entry_min=setup.entry_min,
+                entry_max=setup.entry_max,
+                stop_loss=setup.stop_loss,
+                tp1=setup.tp1,
+                tp2=setup.tp2,
+                sl_pips=setup.sl_pips,
+                confidence=setup.confidence,
+            )
+            if _trade_queue_callback:
+                _trade_queue_callback(pending)
+                direction = "LONG" if setup.bias == "long" else "SHORT"
+                await query.message.reply_text(
+                    f"\u2705 {direction} trade queued for MT5 execution!\n"
+                    f"Trade ID: {trade_id}\n"
+                    f"Entry: {setup.entry_min:.3f} - {setup.entry_max:.3f}\n"
+                    f"SL: {setup.stop_loss:.3f} | TP1: {setup.tp1:.3f} | TP2: {setup.tp2:.3f}\n\n"
+                    f"\u23f3 Waiting for MT5 EA to pick up..."
+                )
+            else:
+                await query.message.reply_text(
+                    "\u26a0\ufe0f Trade queue not available. Execute manually on MT5."
+                )
+        else:
+            await query.message.reply_text(
+                "\u26a0\ufe0f Setup data no longer available. Execute manually on MT5."
+            )
         logger.info("Setup %s: EXECUTE selected", idx)
+
     elif data.startswith("skip_"):
         idx = data.split("_")[1]
         await query.edit_message_reply_markup(reply_markup=None)
@@ -252,6 +292,40 @@ async def _cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Your chat ID: {chat_id}\n\n"
         f"Use /help to see available commands."
     )
+
+
+async def send_trade_confirmation(report: TradeExecutionReport):
+    """Send trade execution confirmation to Telegram."""
+    if not _app:
+        logger.error("Telegram bot not initialized")
+        return
+
+    chat_id = TELEGRAM_CHAT_ID
+    if not chat_id:
+        return
+
+    if report.status == "executed":
+        msg = (
+            f"\u2705 Trade Executed on MT5!\n"
+            f"\u2501" * 20 + "\n"
+            f"\U0001f194 Trade ID: {report.trade_id}\n"
+            f"\U0001f4b0 Entry: {report.actual_entry:.3f}\n"
+            f"\U0001f534 SL: {report.actual_sl:.3f}\n"
+            f"\U0001f3af TP1: {report.actual_tp1:.3f} ({report.lots_tp1:.2f} lots) — ticket #{report.ticket_tp1}\n"
+            f"\U0001f3af TP2: {report.actual_tp2:.3f} ({report.lots_tp2:.2f} lots) — ticket #{report.ticket_tp2}\n"
+        )
+    else:
+        msg = (
+            f"\u274c Trade Execution Failed!\n"
+            f"\u2501" * 20 + "\n"
+            f"\U0001f194 Trade ID: {report.trade_id}\n"
+            f"\u26a0\ufe0f Error: {report.error_message}\n"
+        )
+
+    try:
+        await _app.bot.send_message(chat_id=chat_id, text=msg)
+    except Exception as e:
+        logger.error("Failed to send trade confirmation: %s", e)
 
 
 def create_bot_app() -> Application:
