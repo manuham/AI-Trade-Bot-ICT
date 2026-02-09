@@ -15,6 +15,7 @@ from telegram.ext import (
 
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 from models import AnalysisResult, PendingTrade, TradeExecutionReport, TradeSetup
+from news_filter import check_news_restriction, get_upcoming_news
 from pair_profiles import get_profile
 
 logger = logging.getLogger(__name__)
@@ -144,8 +145,20 @@ async def send_analysis(result: AnalysisResult):
             logger.error("Failed to send no-setup message: %s", e)
         return
 
+    # Check for upcoming news to add warning to setup messages
+    news_check = await check_news_restriction(symbol)
+
     for i, setup in enumerate(result.setups):
         msg = _format_setup_message(setup, result.market_summary, symbol, digits)
+
+        if news_check.blocked:
+            msg += (
+                f"\n\n\U0001f6ab FTMO NEWS BLOCK ACTIVE\n"
+                f"\U0001f4f0 {news_check.event_currency}: {news_check.event_title}\n"
+                f"Execute button will be blocked until restriction passes."
+            )
+        elif news_check.warning:
+            msg += f"\n\n\u26a0\ufe0f {news_check.message}"
 
         keyboard = InlineKeyboardMarkup(
             [
@@ -201,6 +214,21 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if analysis and 0 <= idx < len(analysis.setups):
             setup = analysis.setups[idx]
             digits = analysis.digits or 3
+
+            # --- FTMO News Filter: block execution near high-impact news ---
+            news_check = await check_news_restriction(symbol)
+            if news_check.blocked:
+                await query.message.reply_text(
+                    f"\U0001f6ab {symbol} TRADE BLOCKED — FTMO News Restriction\n"
+                    f"\u2501" * 20 + "\n"
+                    f"\U0001f4f0 {news_check.event_currency}: {news_check.event_title}\n"
+                    f"\u23f0 {news_check.message}\n\n"
+                    f"Wait until the restriction window passes, then re-send /scan {symbol} "
+                    f"and try again."
+                )
+                logger.info("[%s] Trade BLOCKED by news filter: %s", symbol, news_check.event_title)
+                return
+
             trade_id = uuid.uuid4().hex[:8]
             pending = PendingTrade(
                 id=trade_id,
@@ -217,11 +245,17 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if _trade_queue_callback:
                 _trade_queue_callback(pending)
                 direction = "LONG" if setup.bias == "long" else "SHORT"
+
+                news_warn = ""
+                if news_check.warning:
+                    news_warn = f"\n\u26a0\ufe0f News alert: {news_check.message}"
+
                 await query.message.reply_text(
                     f"\u2705 {symbol} {direction} trade queued for MT5!\n"
                     f"Trade ID: {trade_id}\n"
                     f"Entry: {_fmt(setup.entry_min, digits)} - {_fmt(setup.entry_max, digits)}\n"
-                    f"SL: {_fmt(setup.stop_loss, digits)} | TP1: {_fmt(setup.tp1, digits)} | TP2: {_fmt(setup.tp2, digits)}\n\n"
+                    f"SL: {_fmt(setup.stop_loss, digits)} | TP1: {_fmt(setup.tp1, digits)} | TP2: {_fmt(setup.tp2, digits)}\n"
+                    f"{news_warn}\n"
                     f"\u23f3 Waiting for MT5 EA to pick up..."
                 )
             else:
@@ -312,6 +346,39 @@ async def _cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines))
 
 
+async def _cmd_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /news command. Shows upcoming high-impact news for tracked pairs."""
+    chat_id = str(update.effective_chat.id)
+    if TELEGRAM_CHAT_ID and chat_id != TELEGRAM_CHAT_ID:
+        await update.message.reply_text("Unauthorized.")
+        return
+
+    # Use tracked pairs or default set
+    tracked = list(_last_analyses.keys()) if _last_analyses else ["GBPJPY", "EURUSD", "GBPUSD", "USDJPY"]
+
+    events = await get_upcoming_news(symbols=tracked, hours_ahead=24)
+
+    if not events:
+        await update.message.reply_text(
+            "\U0001f4c5 No high-impact news in the next 24h for your pairs.\n"
+            f"Tracked: {', '.join(tracked)}"
+        )
+        return
+
+    lines = ["\U0001f4f0 Upcoming High-Impact News (24h)", "\u2501" * 20, ""]
+
+    for evt in events:
+        time_str = evt["time"].strftime("%a %H:%M UTC")
+        forecast = f" (F: {evt['forecast']})" if evt["forecast"] else ""
+        lines.append(f"\U0001f534 {time_str} — {evt['currency']}: {evt['title']}{forecast}")
+
+    lines.append("")
+    lines.append(f"\u26a0\ufe0f FTMO: No trades 2 min before/after these events")
+    lines.append(f"\U0001f4b1 Tracked: {', '.join(tracked)}")
+
+    await update.message.reply_text("\n".join(lines))
+
+
 async def _cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command."""
     msg = (
@@ -320,12 +387,14 @@ async def _cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         + "\n\n"
         "Commands:\n"
         "/scan - Re-scan last pair or /scan GBPJPY\n"
+        "/news - Show upcoming high-impact news events\n"
         "/status - Show bot status for all pairs\n"
         "/help - Show this help message\n\n"
         "The bot analyzes charts sent from MT5 at:\n"
         "\u2022 London Open (08:00 CET)\n"
         "\u2022 NY Open (14:30 CET)\n\n"
         "Trade setups include Execute/Skip buttons.\n"
+        "FTMO news filter auto-blocks trades near high-impact events.\n"
         "Supports multiple pairs — attach the EA to each chart."
     )
     await update.message.reply_text(msg)
@@ -402,6 +471,7 @@ def create_bot_app() -> Application:
 
     _app.add_handler(CommandHandler("start", _cmd_start))
     _app.add_handler(CommandHandler("scan", _cmd_scan))
+    _app.add_handler(CommandHandler("news", _cmd_news))
     _app.add_handler(CommandHandler("status", _cmd_status))
     _app.add_handler(CommandHandler("help", _cmd_help))
     _app.add_handler(CallbackQueryHandler(_handle_callback))
