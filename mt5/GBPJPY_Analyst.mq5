@@ -25,6 +25,8 @@ input int      InpScreenshotHeight= 1080;   // Screenshot Height
 input bool     InpManualTrigger   = false;  // Manual Trigger (set true to force scan)
 input double   InpRiskPercent     = 1.0;    // Risk % per trade
 input int      InpMagicNumber     = 888888; // Magic Number for trades
+input int      InpLondonEndHour   = 17;     // London session end (CET hour, cancels limit orders)
+input int      InpNYEndHour       = 22;     // NY session end (CET hour, cancels limit orders)
 
 //--- Global variables
 datetime g_lastScanTime = 0;
@@ -34,6 +36,12 @@ int      g_lastDay       = 0;
 string   g_screenshotDir;
 datetime g_lastPollTime  = 0;
 string   g_lastTradeId   = "";  // Prevent re-executing the same trade
+
+//--- Pending limit order tracking (for session-based expiry)
+ulong    g_limitTicket1  = 0;   // TP1 limit order ticket
+ulong    g_limitTicket2  = 0;   // TP2 limit order ticket
+string   g_limitSession  = "";  // "London" or "NY" — which session placed the orders
+string   g_limitTradeId  = "";  // Trade ID for logging
 
 //--- Trade object
 CTrade g_trade;
@@ -160,6 +168,9 @@ void OnTimer()
       g_lastPollTime = TimeCurrent();
       PollPendingTrade();
    }
+
+   //--- Check if pending limit orders should be cancelled (session end)
+   CheckLimitOrderExpiry();
 }
 
 //+------------------------------------------------------------------+
@@ -634,6 +645,73 @@ void PollPendingTrade()
 }
 
 //+------------------------------------------------------------------+
+//| Check if pending limit orders should be cancelled (session end)    |
+//+------------------------------------------------------------------+
+void CheckLimitOrderExpiry()
+{
+   //--- Nothing to check if no pending limit orders
+   if(g_limitTicket1 == 0 && g_limitTicket2 == 0)
+      return;
+
+   //--- Get current CET hour
+   MqlDateTime dt;
+   TimeCurrent(dt);
+   int cetHour = dt.hour - InpTimezoneOffset;
+   if(cetHour < 0)  cetHour += 24;
+   if(cetHour >= 24) cetHour -= 24;
+
+   //--- Determine the session end hour
+   int endHour = 0;
+   if(g_limitSession == "London")
+      endHour = InpLondonEndHour;
+   else if(g_limitSession == "NY")
+      endHour = InpNYEndHour;
+   else
+      endHour = InpNYEndHour;  // Manual scans default to NY end
+
+   //--- Check if session has ended
+   if(cetHour < endHour)
+      return;
+
+   //--- First check if orders are still pending (they may have been filled)
+   bool anyDeleted = false;
+
+   if(g_limitTicket1 > 0 && OrderSelect(g_limitTicket1))
+   {
+      //--- Order still exists as pending — cancel it
+      if(g_trade.OrderDelete(g_limitTicket1))
+      {
+         Print("Limit order #", g_limitTicket1, " (TP1) cancelled — ", g_limitSession, " session ended (CET ", cetHour, ":00)");
+         anyDeleted = true;
+      }
+      else
+         Print("WARNING: Failed to cancel limit order #", g_limitTicket1, ": ", g_trade.ResultRetcodeDescription());
+   }
+
+   if(g_limitTicket2 > 0 && OrderSelect(g_limitTicket2))
+   {
+      if(g_trade.OrderDelete(g_limitTicket2))
+      {
+         Print("Limit order #", g_limitTicket2, " (TP2) cancelled — ", g_limitSession, " session ended (CET ", cetHour, ":00)");
+         anyDeleted = true;
+      }
+      else
+         Print("WARNING: Failed to cancel limit order #", g_limitTicket2, ": ", g_trade.ResultRetcodeDescription());
+   }
+
+   if(anyDeleted)
+      Print("=== Unfilled limit orders cancelled (", g_limitSession, " session end, trade ", g_limitTradeId, ") ===");
+   else if(g_limitTicket1 > 0 || g_limitTicket2 > 0)
+      Print("Limit orders for trade ", g_limitTradeId, " were already filled or cancelled.");
+
+   //--- Clear tracking
+   g_limitTicket1 = 0;
+   g_limitTicket2 = 0;
+   g_limitSession = "";
+   g_limitTradeId = "";
+}
+
+//+------------------------------------------------------------------+
 //| Execute trade with split lots (50% TP1, 50% TP2)                   |
 //| Uses LIMIT orders when price is outside entry zone                 |
 //| Uses MARKET orders when price is already in the zone               |
@@ -768,6 +846,27 @@ void ExecuteTrade(string tradeId, string bias, double entryMin, double entryMax,
 
       Print("=== LIMIT orders placed: ", bias, " ", DoubleToString(lotsTP1 + lotsTP2, 2),
             " lots at ", DoubleToString(limitPrice, 3), " ===");
+
+      //--- Store limit order tickets for session-based expiry
+      g_limitTicket1 = ticket1;
+      g_limitTicket2 = ticket2;
+      g_limitTradeId = tradeId;
+
+      //--- Determine current session from CET hour
+      MqlDateTime dtNow;
+      TimeCurrent(dtNow);
+      int cetNow = dtNow.hour - InpTimezoneOffset;
+      if(cetNow < 0)  cetNow += 24;
+      if(cetNow >= 24) cetNow -= 24;
+
+      if(cetNow < InpLondonEndHour)
+         g_limitSession = "London";
+      else
+         g_limitSession = "NY";
+
+      Print("Limit orders tracked for ", g_limitSession, " session expiry (end at CET ",
+            (g_limitSession == "London" ? IntegerToString(InpLondonEndHour) : IntegerToString(InpNYEndHour)), ":00)");
+
       SendExecutionReport(tradeId, (int)ticket1, (int)ticket2, lotsTP1, lotsTP2,
                           limitPrice, stopLoss, tp1, tp2, "pending", "");
    }
