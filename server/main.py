@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 import config
 from analyzer import analyze_charts
 from models import AnalysisResult, MarketData, PendingTrade, TradeExecutionReport
+from pair_profiles import get_profile
 from telegram_bot import (
     create_bot_app,
     get_bot_app,
@@ -33,49 +34,56 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# In-memory storage
+# In-memory storage — keyed by symbol for multi-pair support
 # ---------------------------------------------------------------------------
-_last_screenshots: dict[str, bytes] = {}
-_last_market_data: Optional[MarketData] = None
-_last_result: Optional[AnalysisResult] = None
+_last_screenshots: dict[str, dict[str, bytes]] = {}   # {"GBPJPY": {"h1": b"...", ...}}
+_last_market_data: dict[str, MarketData] = {}          # {"GBPJPY": MarketData(...)}
+_last_results: dict[str, AnalysisResult] = {}           # {"GBPJPY": AnalysisResult(...)}
 _analysis_lock = asyncio.Lock()
 
-# Trade execution queue — one pending trade at a time
-_pending_trade: Optional[PendingTrade] = None
+# Trade execution queue — one pending trade per symbol
+_pending_trades: dict[str, PendingTrade] = {}           # {"GBPJPY": PendingTrade(...)}
 
 
 def queue_pending_trade(trade: PendingTrade):
     """Called by telegram_bot when Execute is pressed."""
-    global _pending_trade
-    _pending_trade = trade
-    logger.info("Trade queued for MT5: %s %s", trade.bias.upper(), trade.id)
+    _pending_trades[trade.symbol] = trade
+    logger.info("[%s] Trade queued for MT5: %s %s", trade.symbol, trade.bias.upper(), trade.id)
 
 
-def get_pending_trade() -> Optional[PendingTrade]:
-    """Return current pending trade (or None)."""
-    return _pending_trade
+def get_pending_trade(symbol: str) -> Optional[PendingTrade]:
+    """Return current pending trade for symbol (or None)."""
+    return _pending_trades.get(symbol)
 
 
-def clear_pending_trade():
+def clear_pending_trade(symbol: str):
     """Remove the pending trade after MT5 picks it up."""
-    global _pending_trade
-    _pending_trade = None
+    _pending_trades.pop(symbol, None)
 
 
-async def _run_scan_from_telegram():
+async def _run_scan_from_telegram(symbol: str = ""):
     """Callback invoked by the /scan Telegram command."""
-    if _last_screenshots and _last_market_data:
+    # If no symbol specified, use the most recently scanned pair
+    if not symbol and _last_results:
+        symbol = max(_last_results, key=lambda s: _last_results[s].market_summary != "")
+    if not symbol:
+        symbol = "GBPJPY"
+
+    screenshots = _last_screenshots.get(symbol)
+    market_data = _last_market_data.get(symbol)
+
+    if screenshots and market_data:
         await _run_analysis(
-            _last_screenshots.get("h1", b""),
-            _last_screenshots.get("m15", b""),
-            _last_screenshots.get("m5", b""),
-            _last_market_data,
+            screenshots.get("h1", b""),
+            screenshots.get("m15", b""),
+            screenshots.get("m5", b""),
+            market_data,
         )
-    elif _last_result:
-        await send_analysis(_last_result)
+    elif symbol in _last_results:
+        await send_analysis(_last_results[symbol])
     else:
         raise RuntimeError(
-            "No screenshots available. Trigger a scan from MT5 first."
+            f"No screenshots available for {symbol}. Trigger a scan from MT5 first."
         )
 
 
@@ -83,22 +91,22 @@ async def _run_analysis(
     h1: bytes, m15: bytes, m5: bytes, market_data: MarketData
 ):
     """Run analysis pipeline and send results via Telegram."""
-    global _last_result
+    symbol = market_data.symbol
 
     async with _analysis_lock:
-        logger.info("Starting analysis pipeline...")
+        logger.info("[%s] Starting analysis pipeline...", symbol)
         result = await analyze_charts(h1, m15, m5, market_data)
-        _last_result = result
+        _last_results[symbol] = result
         store_analysis(result)
         logger.info(
-            "Analysis complete: %d setups found", len(result.setups)
+            "[%s] Analysis complete: %d setups found", symbol, len(result.setups)
         )
 
         try:
             await send_analysis(result)
-            logger.info("Telegram notifications sent")
+            logger.info("[%s] Telegram notifications sent", symbol)
         except Exception as e:
-            logger.error("Failed to send Telegram notifications: %s", e)
+            logger.error("[%s] Failed to send Telegram notifications: %s", symbol, e)
 
 
 # ---------------------------------------------------------------------------
@@ -107,11 +115,10 @@ async def _run_analysis(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    logger.info("Starting GBPJPY Analyst server on %s:%s", config.HOST, config.PORT)
+    logger.info("Starting AI Trade Analyst server on %s:%s", config.HOST, config.PORT)
     try:
         bot_app = create_bot_app()
         set_scan_callback(_run_scan_from_telegram)
-        # Give telegram_bot access to the trade queue
         from telegram_bot import set_trade_queue_callback
         set_trade_queue_callback(queue_pending_trade)
         await bot_app.initialize()
@@ -142,8 +149,8 @@ async def lifespan(app: FastAPI):
 # FastAPI app
 # ---------------------------------------------------------------------------
 app = FastAPI(
-    title="GBPJPY AI Trade Analyst",
-    version="1.0.0",
+    title="AI Trade Analyst",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -152,8 +159,9 @@ app = FastAPI(
 async def health():
     return {
         "status": "ok",
-        "last_analysis": _last_result is not None,
-        "setups_count": len(_last_result.setups) if _last_result else 0,
+        "pairs_analyzed": list(_last_results.keys()),
+        "pending_trades": list(_pending_trades.keys()),
+        "setups": {s: len(r.setups) for s, r in _last_results.items()},
     }
 
 
@@ -166,8 +174,6 @@ async def analyze(
     market_data: str = Form(...),
 ):
     """Receive screenshots and market data from MT5 EA, trigger analysis."""
-    global _last_screenshots, _last_market_data
-
     logger.info(
         "Received analysis request — files: h1=%s, m15=%s, m5=%s",
         screenshot_h1.filename,
@@ -175,7 +181,6 @@ async def analyze(
         screenshot_m5.filename,
     )
 
-    # Read screenshot bytes
     h1_bytes = await screenshot_h1.read()
     m15_bytes = await screenshot_m15.read()
     m5_bytes = await screenshot_m5.read()
@@ -187,7 +192,6 @@ async def analyze(
         len(m5_bytes),
     )
 
-    # Parse market data JSON
     try:
         md_dict = json.loads(market_data)
         md = MarketData(**md_dict)
@@ -198,35 +202,41 @@ async def analyze(
             content={"error": f"Invalid market data JSON: {e}"},
         )
 
-    # Store for later re-use (e.g. /scan command)
-    _last_screenshots = {"h1": h1_bytes, "m15": m15_bytes, "m5": m5_bytes}
-    _last_market_data = md
+    symbol = md.symbol
+    logger.info("[%s] Analysis request received", symbol)
 
-    # Fire-and-forget: run analysis in background
+    # Store for later re-use (e.g. /scan command) — keyed by symbol
+    _last_screenshots[symbol] = {"h1": h1_bytes, "m15": m15_bytes, "m5": m5_bytes}
+    _last_market_data[symbol] = md
+
     asyncio.create_task(_run_analysis(h1_bytes, m15_bytes, m5_bytes, md))
 
-    return {"status": "accepted", "message": "Analysis started"}
+    return {"status": "accepted", "symbol": symbol, "message": "Analysis started"}
 
 
 @app.get("/scan")
-async def manual_scan():
+async def manual_scan(symbol: str = ""):
     """Manual trigger endpoint."""
-    if _last_screenshots and _last_market_data:
+    target = symbol or (list(_last_screenshots.keys())[0] if _last_screenshots else "")
+
+    if target and target in _last_screenshots and target in _last_market_data:
+        screenshots = _last_screenshots[target]
         asyncio.create_task(
             _run_analysis(
-                _last_screenshots.get("h1", b""),
-                _last_screenshots.get("m15", b""),
-                _last_screenshots.get("m5", b""),
-                _last_market_data,
+                screenshots.get("h1", b""),
+                screenshots.get("m15", b""),
+                screenshots.get("m5", b""),
+                _last_market_data[target],
             )
         )
-        return {"status": "accepted", "message": "Re-analysis started"}
+        return {"status": "accepted", "symbol": target, "message": "Re-analysis started"}
 
-    if _last_result:
+    if target and target in _last_results:
         return {
             "status": "cached",
+            "symbol": target,
             "message": "Returning last analysis",
-            "setups": len(_last_result.setups),
+            "setups": len(_last_results[target].setups),
         }
 
     return JSONResponse(
@@ -236,14 +246,13 @@ async def manual_scan():
 
 
 @app.get("/pending_trade")
-async def pending_trade():
+async def pending_trade(symbol: str = ""):
     """MT5 EA polls this to check for trades to execute.
-    Returns the trade and immediately clears it (consume-on-read)
-    to prevent duplicate execution."""
-    trade = get_pending_trade()
+    Returns the trade and immediately clears it (consume-on-read)."""
+    trade = get_pending_trade(symbol)
     if trade:
-        clear_pending_trade()  # Clear immediately so next poll returns empty
-        logger.info("Pending trade consumed by MT5: %s", trade.id)
+        clear_pending_trade(symbol)
+        logger.info("[%s] Pending trade consumed by MT5: %s", symbol, trade.id)
         return {"pending": True, "trade": trade.model_dump()}
     return {"pending": False}
 
@@ -252,18 +261,18 @@ async def pending_trade():
 async def trade_executed(report: TradeExecutionReport):
     """MT5 EA calls this after placing a trade."""
     logger.info(
-        "Trade execution report: id=%s status=%s",
+        "[%s] Trade execution report: id=%s status=%s",
+        report.symbol,
         report.trade_id,
         report.status,
     )
-    clear_pending_trade()
+    clear_pending_trade(report.symbol)
 
-    # Send confirmation to Telegram
     try:
         await send_trade_confirmation(report)
-        logger.info("Trade confirmation sent to Telegram")
+        logger.info("[%s] Trade confirmation sent to Telegram", report.symbol)
     except Exception as e:
-        logger.error("Failed to send trade confirmation: %s", e)
+        logger.error("[%s] Failed to send trade confirmation: %s", report.symbol, e)
 
     return {"status": "ok", "message": "Execution report received"}
 

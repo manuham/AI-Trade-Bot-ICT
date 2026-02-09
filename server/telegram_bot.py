@@ -15,37 +15,41 @@ from telegram.ext import (
 
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 from models import AnalysisResult, PendingTrade, TradeExecutionReport, TradeSetup
+from pair_profiles import get_profile
 
 logger = logging.getLogger(__name__)
 
 # Global state
 _app: Optional[Application] = None
-_last_analysis: Optional[AnalysisResult] = None
-_last_scan_time: Optional[datetime] = None
-_scan_callback = None  # Set by main.py to trigger analysis
-_trade_queue_callback = None  # Set by main.py to queue trades for MT5
+_last_analyses: dict[str, AnalysisResult] = {}   # keyed by symbol
+_last_scan_times: dict[str, datetime] = {}        # keyed by symbol
+_scan_callback = None
+_trade_queue_callback = None
 
 
 def set_scan_callback(callback):
-    """Register the function to call when /scan is invoked."""
     global _scan_callback
     _scan_callback = callback
 
 
 def set_trade_queue_callback(callback):
-    """Register the function to queue a trade for MT5 execution."""
     global _trade_queue_callback
     _trade_queue_callback = callback
 
 
 def store_analysis(result: AnalysisResult):
-    """Store the latest analysis result."""
-    global _last_analysis, _last_scan_time
-    _last_analysis = result
-    _last_scan_time = datetime.now(timezone.utc)
+    """Store the latest analysis result, keyed by symbol."""
+    symbol = result.symbol or "UNKNOWN"
+    _last_analyses[symbol] = result
+    _last_scan_times[symbol] = datetime.now(timezone.utc)
 
 
-def _format_setup_message(setup: TradeSetup, summary: str) -> str:
+def _fmt(price: float, digits: int) -> str:
+    """Format a price with the correct number of decimal places."""
+    return f"{price:.{digits}f}"
+
+
+def _format_setup_message(setup: TradeSetup, summary: str, symbol: str, digits: int) -> str:
     """Format a single trade setup as a Telegram message."""
     direction_emoji = "\U0001f7e2" if setup.bias == "long" else "\U0001f534"
     direction_label = "LONG" if setup.bias == "long" else "SHORT"
@@ -58,11 +62,10 @@ def _format_setup_message(setup: TradeSetup, summary: str) -> str:
     }.get(setup.confidence, "")
 
     lines = [
-        f"{direction_emoji} GBPJPY {direction_label} Setup ({tf_label})",
+        f"{direction_emoji} {symbol} {direction_label} Setup ({tf_label})",
         "\u2501" * 20,
     ]
 
-    # Show H1 trend and price zone context
     if setup.h1_trend:
         trend_emoji = {
             "bullish": "\U0001f7e2",
@@ -77,10 +80,10 @@ def _format_setup_message(setup: TradeSetup, summary: str) -> str:
 
     lines += [
         "",
-        f"\U0001f4cd Entry: {setup.entry_min:.3f} - {setup.entry_max:.3f}",
-        f"\U0001f534 SL: {setup.stop_loss:.3f} ({setup.sl_pips:.0f} pips)",
-        f"\U0001f3af TP1: {setup.tp1:.3f} ({setup.tp1_pips:.0f} pips) \u2014 close 50%",
-        f"\U0001f3af TP2: {setup.tp2:.3f} ({setup.tp2_pips:.0f} pips) \u2014 runner",
+        f"\U0001f4cd Entry: {_fmt(setup.entry_min, digits)} - {_fmt(setup.entry_max, digits)}",
+        f"\U0001f534 SL: {_fmt(setup.stop_loss, digits)} ({setup.sl_pips:.0f} pips)",
+        f"\U0001f3af TP1: {_fmt(setup.tp1, digits)} ({setup.tp1_pips:.0f} pips) \u2014 close 50%",
+        f"\U0001f3af TP2: {_fmt(setup.tp2, digits)} ({setup.tp2_pips:.0f} pips) \u2014 runner",
         f"\U0001f4ca R:R: 1:{setup.rr_tp1:.1f} (TP1) | 1:{setup.rr_tp2:.1f} (TP2)",
         f"{confidence_emoji} Confidence: {setup.confidence.upper()}",
         "",
@@ -113,10 +116,12 @@ async def send_analysis(result: AnalysisResult):
 
     store_analysis(result)
 
+    symbol = result.symbol or "UNKNOWN"
+    digits = result.digits or 3
+
     if not result.setups:
-        # No setups found
         msg = (
-            "\U0001f50d GBPJPY Analysis Complete\n"
+            f"\U0001f50d {symbol} Analysis Complete\n"
             + "\u2501" * 20
             + "\n\n"
             + "\u274c No valid trade setups identified.\n\n"
@@ -139,17 +144,18 @@ async def send_analysis(result: AnalysisResult):
             logger.error("Failed to send no-setup message: %s", e)
         return
 
-    # Send each setup as a separate message with action buttons
     for i, setup in enumerate(result.setups):
-        msg = _format_setup_message(setup, result.market_summary)
+        msg = _format_setup_message(setup, result.market_summary, symbol, digits)
 
         keyboard = InlineKeyboardMarkup(
             [
                 [
                     InlineKeyboardButton(
-                        "\u2705 Execute", callback_data=f"execute_{i}"
+                        "\u2705 Execute", callback_data=f"execute_{symbol}_{i}"
                     ),
-                    InlineKeyboardButton("\u274c Skip", callback_data=f"skip_{i}"),
+                    InlineKeyboardButton(
+                        "\u274c Skip", callback_data=f"skip_{symbol}_{i}"
+                    ),
                 ]
             ]
         )
@@ -161,9 +167,8 @@ async def send_analysis(result: AnalysisResult):
         except Exception as e:
             logger.error("Failed to send setup %d: %s", i, e)
 
-    # Send summary with events
     if result.upcoming_events:
-        events_msg = "\U0001f4c5 Upcoming Events:\n"
+        events_msg = f"\U0001f4c5 {symbol} Upcoming Events:\n"
         for evt in result.upcoming_events:
             events_msg += f"\u2022 {evt}\n"
         try:
@@ -178,16 +183,28 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     data = query.data
+
     if data.startswith("execute_"):
-        idx = int(data.split("_")[1])
+        # Format: execute_GBPJPY_0
+        parts = data.split("_", 2)  # ["execute", "GBPJPY", "0"]
+        if len(parts) == 3:
+            symbol = parts[1]
+            idx = int(parts[2])
+        else:
+            # Backward compat: execute_0
+            symbol = ""
+            idx = int(parts[1])
+
         await query.edit_message_reply_markup(reply_markup=None)
 
-        # Queue the trade for MT5 pickup
-        if _last_analysis and 0 <= idx < len(_last_analysis.setups):
-            setup = _last_analysis.setups[idx]
+        analysis = _last_analyses.get(symbol)
+        if analysis and 0 <= idx < len(analysis.setups):
+            setup = analysis.setups[idx]
+            digits = analysis.digits or 3
             trade_id = uuid.uuid4().hex[:8]
             pending = PendingTrade(
                 id=trade_id,
+                symbol=symbol,
                 bias=setup.bias,
                 entry_min=setup.entry_min,
                 entry_max=setup.entry_max,
@@ -201,10 +218,10 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _trade_queue_callback(pending)
                 direction = "LONG" if setup.bias == "long" else "SHORT"
                 await query.message.reply_text(
-                    f"\u2705 {direction} trade queued for MT5 execution!\n"
+                    f"\u2705 {symbol} {direction} trade queued for MT5!\n"
                     f"Trade ID: {trade_id}\n"
-                    f"Entry: {setup.entry_min:.3f} - {setup.entry_max:.3f}\n"
-                    f"SL: {setup.stop_loss:.3f} | TP1: {setup.tp1:.3f} | TP2: {setup.tp2:.3f}\n\n"
+                    f"Entry: {_fmt(setup.entry_min, digits)} - {_fmt(setup.entry_max, digits)}\n"
+                    f"SL: {_fmt(setup.stop_loss, digits)} | TP1: {_fmt(setup.tp1, digits)} | TP2: {_fmt(setup.tp2, digits)}\n\n"
                     f"\u23f3 Waiting for MT5 EA to pick up..."
                 )
             else:
@@ -215,41 +232,55 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(
                 "\u26a0\ufe0f Setup data no longer available. Execute manually on MT5."
             )
-        logger.info("Setup %s: EXECUTE selected", idx)
+        logger.info("[%s] Setup %s: EXECUTE selected", symbol, idx)
 
     elif data.startswith("skip_"):
-        idx = data.split("_")[1]
+        parts = data.split("_", 2)
+        symbol = parts[1] if len(parts) == 3 else ""
+        idx = parts[2] if len(parts) == 3 else parts[1]
         await query.edit_message_reply_markup(reply_markup=None)
-        await query.message.reply_text("\u274c Setup skipped")
-        logger.info("Setup %s: SKIP selected", idx)
+        await query.message.reply_text(f"\u274c {symbol} setup skipped")
+        logger.info("[%s] Setup %s: SKIP selected", symbol, idx)
 
 
 async def _cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /scan command."""
+    """Handle /scan command. Usage: /scan or /scan GBPJPY"""
     chat_id = str(update.effective_chat.id)
     if TELEGRAM_CHAT_ID and chat_id != TELEGRAM_CHAT_ID:
         await update.message.reply_text("Unauthorized.")
         return
 
+    # Parse optional symbol argument
+    symbol = ""
+    if context.args:
+        symbol = context.args[0].upper()
+
     if _scan_callback:
+        label = symbol or "last pair"
         await update.message.reply_text(
-            "\U0001f50d Triggering manual scan... This may take a minute."
+            f"\U0001f50d Triggering scan for {label}... This may take a minute."
         )
         try:
-            await _scan_callback()
+            await _scan_callback(symbol)
         except Exception as e:
             logger.error("Scan callback failed: %s", e)
             await update.message.reply_text(f"\u274c Scan failed: {e}")
-    elif _last_analysis:
-        await update.message.reply_text(
-            "\U0001f504 Re-sending last analysis result..."
-        )
-        await send_analysis(_last_analysis)
+    elif _last_analyses:
+        target = symbol or list(_last_analyses.keys())[0]
+        if target in _last_analyses:
+            await update.message.reply_text(
+                f"\U0001f504 Re-sending last {target} analysis..."
+            )
+            await send_analysis(_last_analyses[target])
+        else:
+            await update.message.reply_text(
+                f"\u274c No analysis available for {target}."
+            )
     else:
         await update.message.reply_text(
             "\u274c No previous analysis available.\n"
-            "Trigger a scan from MT5 first (click the Scan button on chart), "
-            "or wait for the next scheduled session."
+            "Trigger a scan from MT5 first, or wait for the next session.\n"
+            "Usage: /scan or /scan GBPJPY"
         )
 
 
@@ -260,26 +291,23 @@ async def _cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Unauthorized.")
         return
 
-    lines = ["\U0001f4ca GBPJPY Analyst Bot Status", "\u2501" * 20]
+    lines = ["\U0001f4ca AI Trade Analyst Status", "\u2501" * 20, "", "\u2705 Bot: Online", ""]
 
-    lines.append("\u2705 Bot: Online")
-
-    if _last_scan_time:
-        lines.append(f"\U0001f553 Last scan: {_last_scan_time.strftime('%Y-%m-%d %H:%M UTC')}")
+    if _last_scan_times:
+        for symbol, scan_time in sorted(_last_scan_times.items()):
+            analysis = _last_analyses.get(symbol)
+            count = len(analysis.setups) if analysis else 0
+            time_str = scan_time.strftime("%H:%M UTC")
+            lines.append(f"\U0001f4b1 {symbol}: {count} setup(s) @ {time_str}")
     else:
-        lines.append("\U0001f553 Last scan: None")
+        lines.append("\U0001f553 No scans yet")
 
-    if _last_analysis and _last_analysis.setups:
-        lines.append(f"\U0001f4c8 Last result: {len(_last_analysis.setups)} setup(s)")
-    elif _last_analysis:
-        lines.append("\U0001f4c8 Last result: No setups")
-    else:
-        lines.append("\U0001f4c8 Last result: N/A")
-
-    lines.append("")
-    lines.append("Scheduled scans:")
-    lines.append("\u2022 London Open: 08:00 CET")
-    lines.append("\u2022 NY Open: 14:30 CET")
+    lines += [
+        "",
+        "Scheduled scans (per pair):",
+        "\u2022 London Open: 08:00 CET",
+        "\u2022 NY Open: 14:30 CET",
+    ]
 
     await update.message.reply_text("\n".join(lines))
 
@@ -287,18 +315,18 @@ async def _cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command."""
     msg = (
-        "\U0001f916 GBPJPY AI Analyst Bot\n"
+        "\U0001f916 AI Trade Analyst Bot\n"
         + "\u2501" * 20
         + "\n\n"
         "Commands:\n"
-        "/scan - Trigger manual analysis or re-send last result\n"
-        "/status - Show bot status and last scan info\n"
+        "/scan - Re-scan last pair or /scan GBPJPY\n"
+        "/status - Show bot status for all pairs\n"
         "/help - Show this help message\n\n"
-        "The bot automatically analyzes GBPJPY at:\n"
+        "The bot analyzes charts sent from MT5 at:\n"
         "\u2022 London Open (08:00 CET)\n"
         "\u2022 NY Open (14:30 CET)\n\n"
         "Trade setups include Execute/Skip buttons.\n"
-        "Execute = manual confirmation to take trade on MT5."
+        "Supports multiple pairs — attach the EA to each chart."
     )
     await update.message.reply_text(msg)
 
@@ -307,7 +335,7 @@ async def _cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command."""
     chat_id = update.effective_chat.id
     await update.message.reply_text(
-        f"\U0001f44b Welcome to GBPJPY AI Analyst Bot!\n\n"
+        f"\U0001f44b Welcome to AI Trade Analyst Bot!\n\n"
         f"Your chat ID: {chat_id}\n\n"
         f"Use /help to see available commands."
     )
@@ -323,33 +351,34 @@ async def send_trade_confirmation(report: TradeExecutionReport):
     if not chat_id:
         return
 
+    symbol = report.symbol or "UNKNOWN"
+    digits = get_profile(symbol)["digits"]
     separator = "\u2501" * 20
 
     if report.status == "pending":
-        # Limit orders placed — waiting for price to reach entry zone
         msg = (
-            f"\u23f3 Limit Orders Placed on MT5!\n"
+            f"\u23f3 {symbol} Limit Orders Placed!\n"
             f"{separator}\n"
             f"\U0001f194 Trade ID: {report.trade_id}\n"
-            f"\U0001f4cd Limit Entry: {report.actual_entry:.3f}\n"
-            f"\U0001f534 SL: {report.actual_sl:.3f}\n"
-            f"\U0001f3af TP1: {report.actual_tp1:.3f} ({report.lots_tp1:.2f} lots) — order #{report.ticket_tp1}\n"
-            f"\U0001f3af TP2: {report.actual_tp2:.3f} ({report.lots_tp2:.2f} lots) — order #{report.ticket_tp2}\n\n"
+            f"\U0001f4cd Limit Entry: {_fmt(report.actual_entry, digits)}\n"
+            f"\U0001f534 SL: {_fmt(report.actual_sl, digits)}\n"
+            f"\U0001f3af TP1: {_fmt(report.actual_tp1, digits)} ({report.lots_tp1:.2f} lots) \u2014 order #{report.ticket_tp1}\n"
+            f"\U0001f3af TP2: {_fmt(report.actual_tp2, digits)} ({report.lots_tp2:.2f} lots) \u2014 order #{report.ticket_tp2}\n\n"
             f"Waiting for price to reach entry zone..."
         )
     elif report.status == "executed":
         msg = (
-            f"\u2705 Trade Executed on MT5!\n"
+            f"\u2705 {symbol} Trade Executed!\n"
             f"{separator}\n"
             f"\U0001f194 Trade ID: {report.trade_id}\n"
-            f"\U0001f4b0 Entry: {report.actual_entry:.3f}\n"
-            f"\U0001f534 SL: {report.actual_sl:.3f}\n"
-            f"\U0001f3af TP1: {report.actual_tp1:.3f} ({report.lots_tp1:.2f} lots) — ticket #{report.ticket_tp1}\n"
-            f"\U0001f3af TP2: {report.actual_tp2:.3f} ({report.lots_tp2:.2f} lots) — ticket #{report.ticket_tp2}\n"
+            f"\U0001f4b0 Entry: {_fmt(report.actual_entry, digits)}\n"
+            f"\U0001f534 SL: {_fmt(report.actual_sl, digits)}\n"
+            f"\U0001f3af TP1: {_fmt(report.actual_tp1, digits)} ({report.lots_tp1:.2f} lots) \u2014 ticket #{report.ticket_tp1}\n"
+            f"\U0001f3af TP2: {_fmt(report.actual_tp2, digits)} ({report.lots_tp2:.2f} lots) \u2014 ticket #{report.ticket_tp2}\n"
         )
     else:
         msg = (
-            f"\u274c Trade Execution Failed!\n"
+            f"\u274c {symbol} Trade Failed!\n"
             f"{separator}\n"
             f"\U0001f194 Trade ID: {report.trade_id}\n"
             f"\u26a0\ufe0f Error: {report.error_message}\n"

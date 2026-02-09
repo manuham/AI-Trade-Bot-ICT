@@ -3,7 +3,7 @@
 //|                         Swing High/Low Horizontal Level Indicator |
 //|                         Draws clean S/R lines for AI analysis     |
 //+------------------------------------------------------------------+
-#property copyright "GBPJPY AI Trade Analyst Bot"
+#property copyright "AI Trade Analyst Bot"
 #property link      ""
 #property version   "1.10"
 #property indicator_chart_window
@@ -181,7 +181,7 @@ int OnCalculate(const int rates_total,
       double labelOffset = SymbolInfoDouble(_Symbol, SYMBOL_POINT) * 30;  // ~3 pips above
       string lblName = g_prefix + "T" + IntegerToString(i);
       ObjectCreate(0, lblName, OBJ_TEXT, 0, time[0], prices[i] + labelOffset);
-      ObjectSetString(0, lblName, OBJPROP_TEXT, DoubleToString(prices[i], 3));
+      ObjectSetString(0, lblName, OBJPROP_TEXT, DoubleToString(prices[i], (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
       ObjectSetString(0, lblName, OBJPROP_FONT, "Arial");
       ObjectSetInteger(0, lblName, OBJPROP_FONTSIZE, InpLabelSize);
       ObjectSetInteger(0, lblName, OBJPROP_COLOR, clr);

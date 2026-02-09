@@ -55,6 +55,8 @@ class TradeSetup(BaseModel):
 
 
 class AnalysisResult(BaseModel):
+    symbol: str = ""
+    digits: int = 3
     setups: list[TradeSetup] = []
     h1_trend_analysis: str = ""
     market_summary: str = ""
@@ -68,6 +70,7 @@ class AnalysisResult(BaseModel):
 class PendingTrade(BaseModel):
     """A trade approved via Telegram Execute button, waiting for MT5 pickup."""
     id: str
+    symbol: str = ""
     bias: str  # "long" or "short"
     entry_min: float
     entry_max: float
@@ -81,6 +84,7 @@ class PendingTrade(BaseModel):
 class TradeExecutionReport(BaseModel):
     """Confirmation from MT5 EA after trade is placed."""
     trade_id: str
+    symbol: str = ""
     ticket_tp1: int = 0
     ticket_tp2: int = 0
     lots_tp1: float = 0.0
