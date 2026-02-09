@@ -177,9 +177,10 @@ int OnCalculate(const int rates_total,
       ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
       ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
 
-      //--- Small price label
+      //--- Small price label (offset slightly above the line so it's readable)
+      double labelOffset = SymbolInfoDouble(_Symbol, SYMBOL_POINT) * 30;  // ~3 pips above
       string lblName = g_prefix + "T" + IntegerToString(i);
-      ObjectCreate(0, lblName, OBJ_TEXT, 0, time[0], prices[i]);
+      ObjectCreate(0, lblName, OBJ_TEXT, 0, time[0], prices[i] + labelOffset);
       ObjectSetString(0, lblName, OBJPROP_TEXT, DoubleToString(prices[i], 3));
       ObjectSetString(0, lblName, OBJPROP_FONT, "Arial");
       ObjectSetInteger(0, lblName, OBJPROP_FONTSIZE, InpLabelSize);
