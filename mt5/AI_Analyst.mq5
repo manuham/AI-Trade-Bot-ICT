@@ -840,9 +840,9 @@ string BuildMarketDataJSON(string session)
    //--- Account balance
    json += "\"account_balance\":" + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2) + ",";
 
-   //--- OHLC data (D1=20 bars ~1 month, H1=100 bars ~4 days, M5=60 bars ~5 hours)
+   //--- OHLC data (D1=20 bars ~1 month, H1=50 bars ~2 days, M5=60 bars ~5 hours)
    json += "\"ohlc_d1\":" + GetOHLCArray(PERIOD_D1, 20) + ",";
-   json += "\"ohlc_h1\":" + GetOHLCArray(PERIOD_H1, 100) + ",";
+   json += "\"ohlc_h1\":" + GetOHLCArray(PERIOD_H1, 50) + ",";
    json += "\"ohlc_m5\":" + GetOHLCArray(PERIOD_M5, 60);
 
    json += "}";
