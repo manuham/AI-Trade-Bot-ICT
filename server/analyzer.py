@@ -191,21 +191,22 @@ Respond with ONLY valid JSON matching this structure:
 
 
 def _build_screening_prompt(symbol: str, profile: dict, fundamentals: Optional[str] = None) -> str:
-    """Lightweight screening prompt for Sonnet — quick yes/no on trade viability."""
+    """Lightweight screening prompt for Sonnet — quick yes/no on trade viability.
+    Only receives H1+M5 charts (D1 info comes from market data numbers)."""
     fund_section = ""
     if fundamentals:
         fund_section = f"\n\nFundamental context (gathered earlier today):\n{fundamentals}"
 
-    return f"""You are a quick-scan FX analyst. Look at these {symbol} charts (D1, H1, M5) and the market data to determine if there is a clear, high-probability ICT trade setup.{fund_section}
+    return f"""You are a quick-scan FX analyst. Look at these {symbol} charts (H1, M5) and the market data to determine if there is a clear, high-probability ICT trade setup.{fund_section}
+
+The market data JSON includes D1 RSI + ATR + previous day levels, so you can assess D1 bias without the D1 chart.
 
 Check:
-1. D1 trend direction — this is the dominant bias (bullish / bearish / ranging)
+1. D1 bias from market data — RSI_D1 >60 = bullish, <40 = bearish; PDH/PDL/PDC position
 2. H1 structure — aligned with D1 or diverging?
 3. Is price at a key level (order block, FVG, PDH/PDL, Asian range sweep)?
 4. RSI confirmation — does RSI support the direction?
 5. Is there a clear entry with minimum 1:2 R:R on TP1?
-
-The market data JSON includes previous day H/L/C, weekly H/L, Asian session range, RSI values, and ATR.
 
 Respond with ONLY this JSON:
 {{
@@ -270,7 +271,7 @@ def _build_image_content(
     screenshot_m5: bytes,
     market_data: MarketData,
 ) -> list[dict]:
-    """Build the multi-modal user message content for Claude."""
+    """Build the full multi-modal user message content for Opus (all 3 charts + OHLC)."""
     content: list[dict] = []
 
     for label, img_bytes in [
@@ -313,6 +314,49 @@ def _build_image_content(
                         "ohlc_m5": market_dict.get("ohlc_m5", []),
                     }
                 )
+            ),
+        }
+    )
+
+    return content
+
+
+def _build_screening_content(
+    screenshot_h1: bytes,
+    screenshot_m5: bytes,
+    market_data: MarketData,
+) -> list[dict]:
+    """Build lightweight content for Sonnet screening (H1+M5 only, no OHLC).
+    Saves ~40% vs full content by skipping D1 image and OHLC arrays.
+    D1 trend info comes from market data (RSI_D1, PDH/PDL/PDC, ATR_D1)."""
+    content: list[dict] = []
+
+    for label, img_bytes in [
+        ("H1 (Hourly)", screenshot_h1),
+        ("M5 (5-Minute)", screenshot_m5),
+    ]:
+        content.append({"type": "text", "text": f"--- {label} Chart ---"})
+        content.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": _encode_image(img_bytes),
+                },
+            }
+        )
+
+    # Summary market data only — no OHLC arrays
+    market_dict = market_data.model_dump()
+    display_data = {k: v for k, v in market_dict.items() if not k.startswith("ohlc_")}
+
+    content.append(
+        {
+            "type": "text",
+            "text": (
+                "--- Market Data (includes D1 RSI/ATR, session levels) ---\n"
+                + json.dumps(display_data, indent=2)
             ),
         }
     )
@@ -430,6 +474,7 @@ async def screen_charts(
     fundamentals: Optional[str] = None,
 ) -> dict:
     """Quick Sonnet screen — is there a setup worth analyzing in detail?
+    Cost-optimized: only H1+M5 images, no OHLC data, prompt caching.
     Returns dict with has_setup, h1_trend, reasoning, market_summary."""
     if not ANTHROPIC_API_KEY:
         return {"has_setup": True, "reasoning": "API key missing, skipping screen"}
@@ -437,15 +482,25 @@ async def screen_charts(
     client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
     symbol = market_data.symbol
 
-    user_content = _build_image_content(screenshot_d1, screenshot_h1, screenshot_m5, market_data)
-    user_content.append({"type": "text", "text": "Screen these D1/H1/M5 charts plus the session levels and RSI data. Is there a valid ICT setup? Reply with JSON only."})
+    # Lightweight content: only H1+M5, no OHLC (saves ~40% vs full content)
+    user_content = _build_screening_content(screenshot_h1, screenshot_m5, market_data)
+    user_content.append({"type": "text", "text": "Screen these H1/M5 charts plus the market data (D1 bias from RSI/ATR/PDH/PDL). Is there a valid ICT setup? Reply with JSON only."})
+
+    # System prompt with caching (90% discount on repeat calls for same pair)
+    system_prompt = _build_screening_prompt(symbol, profile, fundamentals)
 
     try:
-        logger.info("[%s] Sonnet screening...", symbol)
+        logger.info("[%s] Sonnet screening (lightweight: H1+M5 only)...", symbol)
         response = await client.messages.create(
             model="claude-sonnet-4-5-20250929",
             max_tokens=500,
-            system=_build_screening_prompt(symbol, profile, fundamentals),
+            system=[
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             messages=[{"role": "user", "content": user_content}],
         )
 
@@ -453,6 +508,15 @@ async def screen_charts(
         for block in response.content:
             if hasattr(block, "text") and block.text is not None:
                 raw_text += block.text
+
+        # Log token usage for cost tracking
+        usage = response.usage
+        cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+        cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        logger.info(
+            "[%s] Sonnet screening: input=%d (cache_read=%d, cache_write=%d), output=%d",
+            symbol, usage.input_tokens, cache_read, cache_write, usage.output_tokens,
+        )
 
         parsed = _parse_response(raw_text)
         if parsed:
@@ -521,12 +585,23 @@ async def analyze_charts_full(
             "max_uses": 10,
         })
 
+    # Extended thinking: let Opus reason internally before outputting JSON
+    # Improves setup quality and reduces false positives
+    thinking_config = {"type": "enabled", "budget_tokens": 10000}
+
     try:
-        logger.info("[%s] Opus full analysis (web_search=%s)...", symbol, use_web_search)
+        logger.info("[%s] Opus full analysis (web_search=%s, thinking=10k)...", symbol, use_web_search)
         response = await client.messages.create(
             model="claude-opus-4-20250514",
-            max_tokens=4096,
-            system=system_prompt,
+            max_tokens=16000,
+            thinking=thinking_config,
+            system=[
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             tools=tools if tools else anthropic.NOT_GIVEN,
             messages=[{"role": "user", "content": user_content}],
         )
@@ -536,7 +611,14 @@ async def analyze_charts_full(
             if hasattr(block, "text") and block.text is not None:
                 raw_text += block.text
 
-        logger.info("[%s] Opus response received (%d chars)", symbol, len(raw_text))
+        # Log token usage for cost tracking
+        usage = response.usage
+        cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+        cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        logger.info(
+            "[%s] Opus response: %d chars, input=%d (cache_read=%d, cache_write=%d), output=%d",
+            symbol, len(raw_text), usage.input_tokens, cache_read, cache_write, usage.output_tokens,
+        )
 
         # If this was a web-search call, extract and cache fundamentals for next time
         if use_web_search and raw_text:
