@@ -25,7 +25,7 @@ from telegram_bot import (
     set_scan_callback,
     store_analysis,
 )
-from trade_tracker import init_db, log_trade_executed, log_trade_closed, get_stats as get_trade_stats
+from trade_tracker import init_db, log_trade_executed, log_trade_closed, get_stats as get_trade_stats, cleanup_stale_open_trades
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -132,6 +132,7 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting AI Trade Analyst server on %s:%s", config.HOST, config.PORT)
     init_db()
+    cleanup_stale_open_trades()
     try:
         bot_app = create_bot_app()
         set_scan_callback(_run_scan_from_telegram)
