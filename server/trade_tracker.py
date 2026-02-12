@@ -533,6 +533,22 @@ def cleanup_stale_open_trades(max_age_hours: int = 24):
                         result.rowcount, max_age_hours)
 
 
+def force_close_all_open_trades() -> int:
+    """Force-close ALL open trades in the DB. Used when MT5 positions were
+    closed manually but the EA didn't report it. Returns count of closed trades."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _get_db() as conn:
+        result = conn.execute(
+            "UPDATE trades SET status = 'closed', outcome = 'closed', "
+            "closed_at = ? WHERE outcome = 'open'",
+            (now,),
+        )
+        count = result.rowcount
+        if count > 0:
+            logger.info("Force-closed %d open trades", count)
+        return count
+
+
 def get_recent_closed_for_pair(symbol: str, limit: int = 10) -> list[dict]:
     """Get last N closed trades for a specific pair (for AI performance feedback)."""
     with _get_db() as conn:
