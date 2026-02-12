@@ -71,9 +71,9 @@ def _format_setup_message(setup: TradeSetup, summary: str, symbol: str, digits: 
         "\u2501" * 20,
     ]
 
-    # Trend alignment (D1/H1/M5 score)
+    # Trend alignment (D1/H4/H1/M5 score)
     if setup.trend_alignment:
-        align_emoji = "\U0001f7e2" if setup.trend_alignment.startswith("3/3") else "\U0001f7e1" if setup.trend_alignment.startswith("2/3") else "\U0001f534"
+        align_emoji = "\U0001f7e2" if setup.trend_alignment.startswith("4/4") else "\U0001f7e2" if setup.trend_alignment.startswith("3/4") else "\U0001f7e1" if setup.trend_alignment.startswith("2/4") else "\U0001f534"
         lines.append(f"{align_emoji} Trend: {setup.trend_alignment}")
     elif setup.h1_trend:
         trend_emoji = {
@@ -86,6 +86,10 @@ def _format_setup_message(setup: TradeSetup, summary: str, symbol: str, digits: 
         lines.append(f"\U0001f4cd Zone: {setup.price_zone.upper()}")
     if setup.counter_trend:
         lines.append("\u26a0\ufe0f COUNTER-TREND TRADE")
+    if setup.checklist_score:
+        score_num = int(setup.checklist_score.split("/")[0]) if "/" in setup.checklist_score else 0
+        cl_emoji = "\U0001f7e2" if score_num >= 10 else "\U0001f7e1" if score_num >= 7 else "\U0001f534"
+        lines.append(f"{cl_emoji} ICT Checklist: {setup.checklist_score}")
 
     # Entry distance & status
     if setup.entry_status:
@@ -354,6 +358,8 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         entry_distance_pips=setup.entry_distance_pips,
                         negative_factors=", ".join(setup.negative_factors) if setup.negative_factors else "",
                         price_zone=setup.price_zone,
+                        h4_trend=setup.h4_trend,
+                        checklist_score=setup.checklist_score,
                     )
                 except Exception as e:
                     logger.error("Failed to log trade: %s", e)

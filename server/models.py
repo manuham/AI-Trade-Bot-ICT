@@ -22,6 +22,7 @@ class MarketData(BaseModel):
     spread_pips: float = 0.0
     # ATR values
     atr_d1: float = 0.0
+    atr_h4: float = 0.0
     atr_h1: float = 0.0
     atr_m5: float = 0.0
     # Today's range
@@ -40,12 +41,14 @@ class MarketData(BaseModel):
     asian_low: float = 0.0
     # RSI (14-period)
     rsi_d1: float = 0.0
+    rsi_h4: float = 0.0
     rsi_h1: float = 0.0
     rsi_m5: float = 0.0
     # Account
     account_balance: float = 0.0
-    # OHLC bars (D1=20, H1=100, M5=60)
+    # OHLC bars (D1=20, H4=30, H1=100, M5=60)
     ohlc_d1: list[OHLCBar] = []
+    ohlc_h4: list[OHLCBar] = []
     ohlc_h1: list[OHLCBar] = []
     ohlc_m5: list[OHLCBar] = []
 
@@ -70,11 +73,13 @@ class TradeSetup(BaseModel):
     counter_trend: bool = False
     h1_trend: str = ""
     d1_trend: str = ""
-    trend_alignment: str = ""  # e.g. "3/3 bearish" or "2/3 bullish (M5 diverging)"
+    h4_trend: str = ""
+    trend_alignment: str = ""  # e.g. "4/4 bearish" or "3/4 bullish (M5 diverging)"
     price_zone: str = ""
     entry_distance_pips: float = 0.0
     entry_status: str = ""  # "at_zone", "approaching", "requires_pullback"
     negative_factors: list[str] = []
+    checklist_score: str = ""  # e.g. "10/12" from ICT entry checklist
 
 
 class AnalysisResult(BaseModel):

@@ -90,6 +90,7 @@ async def _run_scan_from_telegram(symbol: str = ""):
     if screenshots and market_data:
         await _run_analysis(
             screenshots.get("d1", b""),
+            screenshots.get("h4", b""),
             screenshots.get("h1", b""),
             screenshots.get("m5", b""),
             market_data,
@@ -103,14 +104,14 @@ async def _run_scan_from_telegram(symbol: str = ""):
 
 
 async def _run_analysis(
-    d1: bytes, h1: bytes, m5: bytes, market_data: MarketData
+    d1: bytes, h4: bytes, h1: bytes, m5: bytes, market_data: MarketData
 ):
     """Run analysis pipeline and send results via Telegram."""
     symbol = market_data.symbol
 
     async with _analysis_lock:
         logger.info("[%s] Starting analysis pipeline...", symbol)
-        result = await analyze_charts(d1, h1, m5, market_data)
+        result = await analyze_charts(d1, h4, h1, m5, market_data)
         _last_results[symbol] = result
         store_analysis(result)
         logger.info(
@@ -199,14 +200,20 @@ async def stats(symbol: str = "", days: int = 30):
 async def analyze(
     request: Request,
     screenshot_d1: UploadFile = File(...),
+    screenshot_h4: UploadFile = File(None),
     screenshot_h1: UploadFile = File(...),
     screenshot_m5: UploadFile = File(...),
     market_data: str = Form(...),
 ):
     """Receive screenshots and market data from MT5 EA, trigger analysis."""
+    h4_bytes = b""
+    if screenshot_h4:
+        h4_bytes = await screenshot_h4.read()
+
     logger.info(
-        "Received analysis request — files: d1=%s, h1=%s, m5=%s",
+        "Received analysis request — files: d1=%s, h4=%s, h1=%s, m5=%s",
         screenshot_d1.filename,
+        screenshot_h4.filename if screenshot_h4 else "N/A",
         screenshot_h1.filename,
         screenshot_m5.filename,
     )
@@ -216,8 +223,9 @@ async def analyze(
     m5_bytes = await screenshot_m5.read()
 
     logger.info(
-        "Screenshot sizes: D1=%d, H1=%d, M5=%d bytes",
+        "Screenshot sizes: D1=%d, H4=%d, H1=%d, M5=%d bytes",
         len(d1_bytes),
+        len(h4_bytes),
         len(h1_bytes),
         len(m5_bytes),
     )
@@ -236,10 +244,10 @@ async def analyze(
     logger.info("[%s] Analysis request received", symbol)
 
     # Store for later re-use (e.g. /scan command) — keyed by symbol
-    _last_screenshots[symbol] = {"d1": d1_bytes, "h1": h1_bytes, "m5": m5_bytes}
+    _last_screenshots[symbol] = {"d1": d1_bytes, "h4": h4_bytes, "h1": h1_bytes, "m5": m5_bytes}
     _last_market_data[symbol] = md
 
-    asyncio.create_task(_run_analysis(d1_bytes, h1_bytes, m5_bytes, md))
+    asyncio.create_task(_run_analysis(d1_bytes, h4_bytes, h1_bytes, m5_bytes, md))
 
     return {"status": "accepted", "symbol": symbol, "message": "Analysis started"}
 
@@ -254,6 +262,7 @@ async def manual_scan(symbol: str = ""):
         asyncio.create_task(
             _run_analysis(
                 screenshots.get("d1", b""),
+                screenshots.get("h4", b""),
                 screenshots.get("h1", b""),
                 screenshots.get("m5", b""),
                 _last_market_data[target],
