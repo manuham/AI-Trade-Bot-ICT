@@ -19,7 +19,7 @@ from news_filter import check_news_restriction, get_upcoming_news
 from pair_profiles import get_profile
 from trade_tracker import (
     log_trade_queued, get_stats, get_recent_trades, get_open_trades,
-    get_daily_pnl, check_correlation_conflict,
+    get_daily_pnl, check_correlation_conflict, force_close_all_open_trades,
 )
 
 logger = logging.getLogger(__name__)
@@ -626,6 +626,29 @@ async def _cmd_drawdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines))
 
 
+async def _cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /reset command — force-close all stale open trades in DB."""
+    chat_id = str(update.effective_chat.id)
+    if TELEGRAM_CHAT_ID and chat_id != TELEGRAM_CHAT_ID:
+        await update.message.reply_text("Unauthorized.")
+        return
+
+    open_trades = get_open_trades()
+    if not open_trades:
+        await update.message.reply_text(
+            "\u2705 No open trades in database. Nothing to reset."
+        )
+        return
+
+    count = force_close_all_open_trades()
+    await update.message.reply_text(
+        f"\u2705 Reset complete!\n"
+        f"Force-closed {count} stale trade(s) in the database.\n\n"
+        f"You can now execute new trades without blocks."
+    )
+    logger.info("User reset %d stale open trades via /reset", count)
+
+
 async def _cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command."""
     msg = (
@@ -637,6 +660,7 @@ async def _cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/stats - Performance stats or /stats GBPJPY 7\n"
         "/drawdown - Daily P&L and risk status\n"
         "/news - Show upcoming high-impact news events\n"
+        "/reset - Force-close stale trades in DB\n"
         "/status - Show bot status for all pairs\n"
         "/help - Show this help message\n\n"
         "The bot analyzes charts sent from MT5 at:\n"
@@ -760,6 +784,7 @@ def create_bot_app() -> Application:
     _app.add_handler(CommandHandler("stats", _cmd_stats))
     _app.add_handler(CommandHandler("drawdown", _cmd_drawdown))
     _app.add_handler(CommandHandler("news", _cmd_news))
+    _app.add_handler(CommandHandler("reset", _cmd_reset))
     _app.add_handler(CommandHandler("status", _cmd_status))
     _app.add_handler(CommandHandler("help", _cmd_help))
     _app.add_handler(CallbackQueryHandler(_handle_callback))
