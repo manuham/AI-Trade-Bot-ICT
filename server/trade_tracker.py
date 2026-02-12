@@ -473,6 +473,9 @@ def get_open_currency_exposure() -> dict[str, list[str]]:
 def check_correlation_conflict(symbol: str, bias: str) -> Optional[str]:
     """Check if a new trade would create dangerous currency correlation.
 
+    Only flags when a DIFFERENT pair creates overlapping currency exposure.
+    Same-pair conflicts are not correlation — that's just adding to the same position.
+
     Returns warning message if conflict found, None if safe.
     """
     exposure = get_open_currency_exposure()
@@ -489,21 +492,45 @@ def check_correlation_conflict(symbol: str, bias: str) -> Optional[str]:
 
     conflicts = []
 
-    # Check base currency
+    # Check base currency — only from DIFFERENT pairs
     for existing in exposure.get(base, []):
+        existing_symbol = existing.split(":")[0]
+        if existing_symbol == symbol:
+            continue  # Skip same pair — not a correlation issue
         existing_dir = existing.split(":")[1].split("_")[0]  # "long" or "short"
         if existing_dir == new_base_dir:
-            conflicts.append(f"{base} already {new_base_dir} via {existing.split(':')[0]}")
+            conflicts.append(f"{base} already {new_base_dir} via {existing_symbol}")
 
-    # Check quote currency
+    # Check quote currency — only from DIFFERENT pairs
     for existing in exposure.get(quote, []):
+        existing_symbol = existing.split(":")[0]
+        if existing_symbol == symbol:
+            continue  # Skip same pair
         existing_dir = existing.split(":")[1].split("_")[0]
         if existing_dir == new_quote_dir:
-            conflicts.append(f"{quote} already {new_quote_dir} via {existing.split(':')[0]}")
+            conflicts.append(f"{quote} already {new_quote_dir} via {existing_symbol}")
 
     if conflicts:
         return "Correlation risk: " + "; ".join(conflicts)
     return None
+
+
+def cleanup_stale_open_trades(max_age_hours: int = 24):
+    """Mark old 'open' trades as closed if they've been open too long.
+
+    This handles cases where MT5 EA didn't report a close (manual close,
+    restart, etc.). Trades older than max_age_hours are assumed closed.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).isoformat()
+    with _get_db() as conn:
+        result = conn.execute(
+            "UPDATE trades SET status = 'closed', outcome = 'closed', "
+            "closed_at = ? WHERE outcome = 'open' AND created_at < ?",
+            (datetime.now(timezone.utc).isoformat(), cutoff),
+        )
+        if result.rowcount > 0:
+            logger.info("Cleaned up %d stale open trades (older than %dh)",
+                        result.rowcount, max_age_hours)
 
 
 def get_recent_closed_for_pair(symbol: str, limit: int = 10) -> list[dict]:
