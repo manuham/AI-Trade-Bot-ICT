@@ -121,6 +121,8 @@ def init_db():
             "ALTER TABLE trades ADD COLUMN entry_distance_pips REAL DEFAULT 0",
             "ALTER TABLE trades ADD COLUMN negative_factors TEXT DEFAULT ''",
             "ALTER TABLE trades ADD COLUMN price_zone TEXT DEFAULT ''",
+            "ALTER TABLE trades ADD COLUMN h4_trend TEXT DEFAULT ''",
+            "ALTER TABLE trades ADD COLUMN checklist_score TEXT DEFAULT ''",
         ]
         for migration in _migrations:
             try:
@@ -159,6 +161,8 @@ def log_trade_queued(
     entry_distance_pips: float = 0,
     negative_factors: str = "",
     price_zone: str = "",
+    h4_trend: str = "",
+    checklist_score: str = "",
 ):
     """Log a trade when the user clicks Execute on Telegram."""
     now = datetime.now(timezone.utc).isoformat()
@@ -170,8 +174,9 @@ def log_trade_queued(
              sl_pips, tp1_pips, tp2_pips, rr_tp1, rr_tp2,
              status, created_at, h1_trend, counter_trend, market_summary,
              raw_response, trend_alignment, d1_trend, entry_status,
-             entry_distance_pips, negative_factors, price_zone)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             entry_distance_pips, negative_factors, price_zone,
+             h4_trend, checklist_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 trade_id, symbol, bias, confidence, session,
                 entry_min, entry_max, stop_loss, tp1, tp2,
@@ -179,6 +184,7 @@ def log_trade_queued(
                 now, h1_trend, int(counter_trend), market_summary,
                 raw_response, trend_alignment, d1_trend, entry_status,
                 entry_distance_pips, negative_factors, price_zone,
+                h4_trend, checklist_score,
             ),
         )
     logger.info("[%s] Trade %s logged as QUEUED", symbol, trade_id)
@@ -573,8 +579,8 @@ def get_recent_closed_for_pair(symbol: str, limit: int = 10) -> list[dict]:
         rows = conn.execute(
             "SELECT id, bias, confidence, outcome, pnl_pips, pnl_money, "
             "sl_pips, tp1_pips, tp2_pips, h1_trend, counter_trend, "
-            "trend_alignment, d1_trend, entry_status, entry_distance_pips, "
-            "negative_factors, price_zone, "
+            "trend_alignment, d1_trend, h4_trend, entry_status, entry_distance_pips, "
+            "negative_factors, price_zone, checklist_score, "
             "created_at, closed_at "
             "FROM trades WHERE symbol = ? AND status = 'closed' "
             "ORDER BY closed_at DESC LIMIT ?",

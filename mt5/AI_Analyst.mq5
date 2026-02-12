@@ -639,25 +639,26 @@ bool RunAnalysis(string session)
 {
    Print("=== Starting ", session, " session analysis for ", _Symbol, " ===");
 
-   //--- Step 1: Capture screenshots for D1, H1, M5 (top-down multi-timeframe)
+   //--- Step 1: Capture screenshots for D1, H4, H1, M5 (top-down multi-timeframe)
    string fileD1  = CaptureTimeframeScreenshot(PERIOD_D1, "D1");
+   string fileH4  = CaptureTimeframeScreenshot(PERIOD_H4, "H4");
    string fileH1  = CaptureTimeframeScreenshot(PERIOD_H1, "H1");
    string fileM5  = CaptureTimeframeScreenshot(PERIOD_M5, "M5");
 
-   if(fileD1 == "" || fileH1 == "" || fileM5 == "")
+   if(fileD1 == "" || fileH4 == "" || fileH1 == "" || fileM5 == "")
    {
       Print("ERROR: Failed to capture one or more screenshots.");
       return false;
    }
 
-   Print("All screenshots captured successfully.");
+   Print("All screenshots captured successfully (D1, H4, H1, M5).");
 
    //--- Step 2: Gather market data JSON
    string jsonData = BuildMarketDataJSON(session);
    Print("Market data JSON built (", StringLen(jsonData), " chars).");
 
    //--- Step 3: Send to server
-   bool result = SendToServer(fileD1, fileH1, fileM5, jsonData);
+   bool result = SendToServer(fileD1, fileH4, fileH1, fileM5, jsonData);
 
    if(result)
    {
@@ -671,6 +672,7 @@ bool RunAnalysis(string session)
 
    //--- Cleanup screenshot files
    FileDelete(fileD1);
+   FileDelete(fileH4);
    FileDelete(fileH1);
    FileDelete(fileM5);
 
@@ -802,8 +804,9 @@ string BuildMarketDataJSON(string session)
    json += "\"ask\":" + DoubleToString(ask, g_digits) + ",";
    json += "\"spread_pips\":" + DoubleToString(spread, 1) + ",";
 
-   //--- ATR values (D1, H1, M5)
+   //--- ATR values (D1, H4, H1, M5)
    json += "\"atr_d1\":" + DoubleToString(GetATR(PERIOD_D1, 14), g_digits) + ",";
+   json += "\"atr_h4\":" + DoubleToString(GetATR(PERIOD_H4, 14), g_digits) + ",";
    json += "\"atr_h1\":" + DoubleToString(GetATR(PERIOD_H1, 14), g_digits) + ",";
    json += "\"atr_m5\":" + DoubleToString(GetATR(PERIOD_M5, 14), g_digits) + ",";
 
@@ -834,14 +837,16 @@ string BuildMarketDataJSON(string session)
 
    //--- RSI values (14-period)
    json += "\"rsi_d1\":" + DoubleToString(GetRSI(PERIOD_D1, 14), 1) + ",";
+   json += "\"rsi_h4\":" + DoubleToString(GetRSI(PERIOD_H4, 14), 1) + ",";
    json += "\"rsi_h1\":" + DoubleToString(GetRSI(PERIOD_H1, 14), 1) + ",";
    json += "\"rsi_m5\":" + DoubleToString(GetRSI(PERIOD_M5, 14), 1) + ",";
 
    //--- Account balance
    json += "\"account_balance\":" + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2) + ",";
 
-   //--- OHLC data (D1=20 bars ~1 month, H1=50 bars ~2 days, M5=60 bars ~5 hours)
+   //--- OHLC data (D1=20 bars ~1 month, H4=30 bars ~5 days, H1=50 bars ~2 days, M5=60 bars ~5 hours)
    json += "\"ohlc_d1\":" + GetOHLCArray(PERIOD_D1, 20) + ",";
+   json += "\"ohlc_h4\":" + GetOHLCArray(PERIOD_H4, 30) + ",";
    json += "\"ohlc_h1\":" + GetOHLCArray(PERIOD_H1, 50) + ",";
    json += "\"ohlc_m5\":" + GetOHLCArray(PERIOD_M5, 60);
 
@@ -1002,7 +1007,7 @@ void AppendBinaryToBody(char &body[], uchar &bin[], int binSize)
 //+------------------------------------------------------------------+
 //| Send data to Python server via multipart POST                      |
 //+------------------------------------------------------------------+
-bool SendToServer(string fileD1, string fileH1, string fileM5, string &jsonData)
+bool SendToServer(string fileD1, string fileH4, string fileH1, string fileM5, string &jsonData)
 {
    string boundary = "----AIBound" + IntegerToString(GetTickCount());
 
@@ -1015,8 +1020,9 @@ bool SendToServer(string fileD1, string fileH1, string fileM5, string &jsonData)
    AppendStringToBody(postData, "\r\n");
    AppendStringToBody(postData, jsonData);
 
-   //--- Part 2-4: screenshot files (D1, H1, M5 — top-down order)
+   //--- Part 2-5: screenshot files (D1, H4, H1, M5 — top-down order)
    AppendFilePart(postData, boundary, "screenshot_d1", fileD1);
+   AppendFilePart(postData, boundary, "screenshot_h4", fileH4);
    AppendFilePart(postData, boundary, "screenshot_h1", fileH1);
    AppendFilePart(postData, boundary, "screenshot_m5", fileM5);
 
