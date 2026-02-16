@@ -126,7 +126,7 @@ class WatchTrade(BaseModel):
     confluence: list[str] = []       # Passed to Haiku for context
     checklist_score: str = ""
     created_at: float = 0.0          # Unix timestamp when watch started
-    max_confirmations: int = 3       # Max Haiku checks before giving up
+    max_confirmations: int = 10      # Max Haiku checks before giving up
     confirmations_used: int = 0      # How many times Haiku was called
     status: str = "watching"         # "watching" | "confirmed" | "rejected" | "expired"
 

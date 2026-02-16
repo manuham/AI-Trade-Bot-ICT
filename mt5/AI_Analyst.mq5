@@ -379,7 +379,8 @@ void CheckZoneReached(int mezHour)
    }
 
    //--- Send to /confirm_entry endpoint
-   bool confirmed = SendConfirmation(fileM1, g_watchTradeId, g_watchBias, price);
+   string response = "";
+   bool confirmed = SendConfirmation(fileM1, g_watchTradeId, g_watchBias, price, response);
    g_lastConfirmTime = TimeCurrent();
 
    FileDelete(fileM1);
@@ -394,16 +395,24 @@ void CheckZoneReached(int mezHour)
    }
    else
    {
-      Print("M1 REJECTED — watch continues, will retry on next zone touch");
-      //--- If server says max attempts exhausted, it will clear the watch
-      //--- Next PollWatchTrade() will detect has_watch=false
+      //--- Check if server says remaining_checks is 0 → stop watching immediately
+      int remainingChecks = (int)JsonGetDouble(response, "remaining_checks");
+      if(remainingChecks <= 0 && StringFind(response, "remaining_checks") >= 0)
+      {
+         g_hasWatch = false;
+         Print("M1 REJECTED — all confirmation attempts exhausted, watch cancelled");
+      }
+      else
+      {
+         Print("M1 REJECTED — ", remainingChecks, " attempts remaining, will retry on next zone touch");
+      }
    }
 }
 
 //+------------------------------------------------------------------+
 //| Send M1 confirmation request to server                             |
 //+------------------------------------------------------------------+
-bool SendConfirmation(string fileM1, string tradeId, string bias, double currentPrice)
+bool SendConfirmation(string fileM1, string tradeId, string bias, double currentPrice, string &responseOut)
 {
    string url = InpServerBase + "/confirm_entry";
    string boundary = "----AIConfirm" + IntegerToString(GetTickCount());
@@ -460,12 +469,12 @@ bool SendConfirmation(string fileM1, string tradeId, string bias, double current
       return false;
    }
 
-   string response = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
-   Print("Confirmation response: ", response);
+   responseOut = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+   Print("Confirmation response: ", responseOut);
 
    //--- Parse confirmed flag
-   if(StringFind(response, "\"confirmed\": true") >= 0 ||
-      StringFind(response, "\"confirmed\":true") >= 0)
+   if(StringFind(responseOut, "\"confirmed\": true") >= 0 ||
+      StringFind(responseOut, "\"confirmed\":true") >= 0)
    {
       Print("M1 confirmation: CONFIRMED!");
       return true;
