@@ -35,8 +35,9 @@ An automated GBPJPY forex trading system (v3.0) that uses ICT (Inner Circle Trad
 | `trade_tracker.py` | SQLite DB — trade lifecycle (queued→executed→closed), P&L tracking, performance stats, correlation checks | ~590 |
 | `news_filter.py` | FTMO-compliant news filter — ForexFactory calendar, ±2 min blocking around high-impact events | ~235 |
 | `pair_profiles.py` | Per-pair config — digits, spreads, kill zone times, search queries | ~130 |
-| `models.py` | Pydantic models — MarketData, TradeSetup, WatchTrade, PendingTrade, AnalysisResult, TradeExecutionReport | ~150 |
-| `config.py` | Environment variables (API keys, limits) | ~15 |
+| `models.py` | Pydantic models — MarketData, TradeSetup, WatchTrade, PendingTrade, AnalysisResult, TradeExecutionReport, TradeCloseReport | ~160 |
+| `config.py` | Environment variables (API keys, limits, API_KEY for auth) | ~20 |
+| `shared_state.py` | Shared mutable state (last_market_data) — breaks circular import between main↔telegram_bot | ~15 |
 
 ### MT5 (MQL5 — `/mt5/`)
 | File | Purpose |
@@ -137,8 +138,9 @@ Copy `mt5/AI_Analyst.mq5` to the Windows MT5 machine at `MQL5/Experts/AI_Analyst
 ## Known Patterns & Gotchas
 
 - **String concat bug**: Never use `f"title\n" f"\u2501" * 20` — Python implicit string concat happens before `*`, repeating the title. Always use explicit `+` before the separator: `f"title\n" + "\u2501" * 20`
-- **Circular imports**: `main.py` and `telegram_bot.py` import each other — use lazy imports (`from telegram_bot import X`) inside functions, not at module level
+- **Shared state pattern**: `shared_state.py` holds mutable data (like `last_market_data`) that both `main.py` and `telegram_bot.py` need — avoids circular imports. `main.py` still uses lazy imports for telegram_bot notification functions inside endpoint handlers
 - **docker-compose v1**: The VPS uses `docker-compose` (hyphenated), not `docker compose`
 - **KeyError 'ContainerConfig'**: Run `docker-compose down` first, then `up -d`
+- **API authentication**: Set `API_KEY` in `server/.env` and `InpApiKey` in EA inputs — server middleware checks `X-API-Key` header. Health endpoint is exempt
 - **MT5 allowed URLs**: Only the base URL `http://46.225.66.110:8000` is needed — covers all endpoints
 - **MEZ timezone**: `datetime.now(timezone(timedelta(hours=1)))` — UTC+1 for CET

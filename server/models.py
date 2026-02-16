@@ -145,3 +145,13 @@ class TradeExecutionReport(BaseModel):
     actual_tp2: float = 0.0
     status: str = "executed"  # "executed" or "failed"
     error_message: str = ""
+
+
+class TradeCloseReport(BaseModel):
+    """Report from MT5 EA when a position is closed (TP/SL hit)."""
+    trade_id: str
+    symbol: str = ""
+    ticket: int = 0
+    close_price: float = 0
+    close_reason: str = ""     # "tp1", "tp2", "sl", "manual", "cancelled"
+    profit: float = 0          # monetary P&L

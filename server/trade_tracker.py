@@ -169,7 +169,7 @@ def log_trade_queued(
     now = datetime.now(timezone.utc).isoformat()
     with _get_db() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO trades
+            """INSERT OR IGNORE INTO trades
             (id, symbol, bias, confidence, session,
              entry_min, entry_max, stop_loss, tp1, tp2,
              sl_pips, tp1_pips, tp2_pips, rr_tp1, rr_tp2,
@@ -286,7 +286,9 @@ def log_trade_closed(
                 updates["outcome"] = "full_win"
             elif tp1_hit and sl_hit:
                 # TP1 hit then SL hit on runner — partial win
-                updates["pnl_pips"] = trade["tp1_pips"] - trade["sl_pips"]
+                # After TP1, EA moves runner SL to breakeven, so runner loss = 0 pips
+                # Net P&L = TP1 profit only (runner closed at entry = 0 pips)
+                updates["pnl_pips"] = trade["tp1_pips"]
                 updates["outcome"] = "partial_win"
             elif close_reason == "cancelled":
                 updates["pnl_pips"] = 0

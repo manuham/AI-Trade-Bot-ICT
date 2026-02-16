@@ -13,3 +13,7 @@ LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 # Risk management
 MAX_DAILY_DRAWDOWN_PCT: float = float(os.getenv("MAX_DAILY_DRAWDOWN_PCT", "3.0"))
 MAX_OPEN_TRADES: int = int(os.getenv("MAX_OPEN_TRADES", "2"))
+
+# API authentication — MT5 EA must send this in X-API-Key header
+# Leave empty to disable authentication (not recommended for production)
+API_KEY: str = os.getenv("API_KEY", "")

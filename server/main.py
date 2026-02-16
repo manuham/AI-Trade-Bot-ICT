@@ -14,11 +14,11 @@ from typing import Optional
 import uvicorn
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 
 import config
+import shared_state
 from analyzer import analyze_charts, confirm_entry
-from models import AnalysisResult, MarketData, PendingTrade, WatchTrade, TradeExecutionReport
+from models import AnalysisResult, MarketData, PendingTrade, WatchTrade, TradeExecutionReport, TradeCloseReport
 from pair_profiles import get_profile
 from telegram_bot import (
     create_bot_app,
@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 # In-memory storage — keyed by symbol for multi-pair support
 # ---------------------------------------------------------------------------
 _last_screenshots: dict[str, dict[str, bytes]] = {}   # {"GBPJPY": {"h1": b"...", ...}}
-_last_market_data: dict[str, MarketData] = {}          # {"GBPJPY": MarketData(...)}
+# shared_state.last_market_data is in shared_state.py (breaks circular import with telegram_bot)
 _last_results: dict[str, AnalysisResult] = {}           # {"GBPJPY": AnalysisResult(...)}
 _analysis_lock = asyncio.Lock()
 
@@ -93,7 +93,7 @@ async def _run_scan_from_telegram(symbol: str = ""):
         symbol = "GBPJPY"
 
     screenshots = _last_screenshots.get(symbol)
-    market_data = _last_market_data.get(symbol)
+    market_data = shared_state.last_market_data.get(symbol)
 
     if screenshots and market_data:
         await _run_analysis(
@@ -236,6 +236,28 @@ app = FastAPI(
 )
 
 
+# ---------------------------------------------------------------------------
+# API key authentication middleware
+# ---------------------------------------------------------------------------
+@app.middleware("http")
+async def verify_api_key(request: Request, call_next):
+    """Check X-API-Key header on all endpoints except /health and /webhook/telegram."""
+    # Skip auth for health check and Telegram webhook
+    if request.url.path in ("/health", "/webhook/telegram"):
+        return await call_next(request)
+
+    # Skip auth if no API_KEY configured (backward compatible)
+    if not config.API_KEY:
+        return await call_next(request)
+
+    api_key = request.headers.get("X-API-Key", "")
+    if api_key != config.API_KEY:
+        logger.warning("Unauthorized request to %s from %s", request.url.path, request.client.host if request.client else "unknown")
+        return JSONResponse(status_code=401, content={"error": "Unauthorized — invalid or missing X-API-Key"})
+
+    return await call_next(request)
+
+
 @app.get("/health")
 async def health():
     # Show pending trades with remaining TTL
@@ -321,7 +343,7 @@ async def analyze(
 
     # Store for later re-use (e.g. /scan command) — keyed by symbol
     _last_screenshots[symbol] = {"d1": d1_bytes, "h4": h4_bytes, "h1": h1_bytes, "m5": m5_bytes}
-    _last_market_data[symbol] = md
+    shared_state.last_market_data[symbol] = md
 
     asyncio.create_task(_run_analysis(d1_bytes, h4_bytes, h1_bytes, m5_bytes, md))
 
@@ -333,7 +355,7 @@ async def manual_scan(symbol: str = ""):
     """Manual trigger endpoint."""
     target = symbol or (list(_last_screenshots.keys())[0] if _last_screenshots else "")
 
-    if target and target in _last_screenshots and target in _last_market_data:
+    if target and target in _last_screenshots and target in shared_state.last_market_data:
         screenshots = _last_screenshots[target]
         asyncio.create_task(
             _run_analysis(
@@ -341,7 +363,7 @@ async def manual_scan(symbol: str = ""):
                 screenshots.get("h4", b""),
                 screenshots.get("h1", b""),
                 screenshots.get("m5", b""),
-                _last_market_data[target],
+                shared_state.last_market_data[target],
             )
         )
         return {"status": "accepted", "symbol": target, "message": "Re-analysis started"}
@@ -438,9 +460,16 @@ async def confirm_entry_endpoint(
         confluence=watch.confluence,
     )
 
-    watch.confirmations_used += 1
     confirmed = result.get("confirmed", False)
     reasoning = result.get("reasoning", "")
+
+    # Only count real analysis attempts, not transient API errors
+    # (errors start with "Error:" from analyzer.py exception handler)
+    is_transient_error = reasoning.startswith("Error:") or reasoning.startswith("Parse failed")
+    if not is_transient_error:
+        watch.confirmations_used += 1
+    else:
+        logger.warning("[%s] Haiku transient error (not counted as attempt): %s", symbol, reasoning)
     remaining = watch.max_confirmations - watch.confirmations_used
 
     # Notify Telegram of confirmation result
@@ -554,16 +583,6 @@ async def trade_executed(report: TradeExecutionReport):
         logger.error("[%s] Failed to send trade confirmation: %s", report.symbol, e)
 
     return {"status": "ok", "message": "Execution report received"}
-
-
-class TradeCloseReport(BaseModel):
-    """Report from MT5 EA when a position is closed (TP/SL hit)."""
-    trade_id: str
-    symbol: str = ""
-    ticket: int = 0
-    close_price: float = 0
-    close_reason: str = ""     # "tp1", "tp2", "sl", "manual", "cancelled"
-    profit: float = 0          # monetary P&L
 
 
 @app.post("/trade_closed")

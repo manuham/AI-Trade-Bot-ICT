@@ -17,7 +17,7 @@ input string   InpServerURL       = "http://127.0.0.1:8000/analyze"; // Server U
 input string   InpServerBase      = "http://127.0.0.1:8000";         // Server Base URL
 input int      InpKillZoneStart   = 8;      // Kill Zone Start Hour (MEZ)
 input int      InpKillZoneStartMin= 0;      // Kill Zone Start Minute
-input int      InpKillZoneEnd     = 11;     // Kill Zone End Hour (MEZ) — watches expire here
+input int      InpKillZoneEnd     = 20;     // Kill Zone End Hour (MEZ) — watches expire here
 input int      InpTimezoneOffset  = 0;      // Timezone Offset (Server - MEZ) in hours
 input int      InpCooldownMinutes = 30;     // Cooldown after scan (minutes)
 input int      InpScreenshotWidth = 2560;   // Screenshot Width
@@ -28,6 +28,7 @@ input int      InpMagicNumber     = 888888; // Magic Number for trades
 input int      InpConfirmCooldown = 60;     // Seconds between M1 confirmation attempts
 input string   InpMode            = "leader";  // Mode: "leader" (analyze+trade) or "follower" (trade only)
 input string   InpSymbolOverride  = "";        // Symbol override for server (e.g. "GBPJPY" when broker uses "GBPJPYm")
+input string   InpApiKey          = "";        // API Key for server authentication (must match server .env API_KEY)
 
 //--- Global variables
 datetime g_lastScanTime = 0;
@@ -74,6 +75,16 @@ bool     g_tp1Hit        = false; // Whether TP1 has been hit (for break-even tr
 //--- Trade object
 CTrade g_trade;
 
+//--- Indicator handles (created once in OnInit, released in OnDeinit)
+int g_hATR_D1  = INVALID_HANDLE;
+int g_hATR_H4  = INVALID_HANDLE;
+int g_hATR_H1  = INVALID_HANDLE;
+int g_hATR_M5  = INVALID_HANDLE;
+int g_hRSI_D1  = INVALID_HANDLE;
+int g_hRSI_H4  = INVALID_HANDLE;
+int g_hRSI_H1  = INVALID_HANDLE;
+int g_hRSI_M5  = INVALID_HANDLE;
+
 //+------------------------------------------------------------------+
 //| Expert initialization function                                     |
 //+------------------------------------------------------------------+
@@ -103,6 +114,24 @@ int OnInit()
    g_trade.SetExpertMagicNumber(InpMagicNumber);
    g_trade.SetDeviationInPoints(30);
    g_trade.SetTypeFilling(ORDER_FILLING_IOC);
+
+   //--- Create indicator handles ONCE (avoid handle leak on every timer tick)
+   g_hATR_D1 = iATR(_Symbol, PERIOD_D1, 14);
+   g_hATR_H4 = iATR(_Symbol, PERIOD_H4, 14);
+   g_hATR_H1 = iATR(_Symbol, PERIOD_H1, 14);
+   g_hATR_M5 = iATR(_Symbol, PERIOD_M5, 14);
+   g_hRSI_D1 = iRSI(_Symbol, PERIOD_D1, 14, PRICE_CLOSE);
+   g_hRSI_H4 = iRSI(_Symbol, PERIOD_H4, 14, PRICE_CLOSE);
+   g_hRSI_H1 = iRSI(_Symbol, PERIOD_H1, 14, PRICE_CLOSE);
+   g_hRSI_M5 = iRSI(_Symbol, PERIOD_M5, 14, PRICE_CLOSE);
+
+   if(g_hATR_D1 == INVALID_HANDLE || g_hATR_H4 == INVALID_HANDLE ||
+      g_hATR_H1 == INVALID_HANDLE || g_hATR_M5 == INVALID_HANDLE ||
+      g_hRSI_D1 == INVALID_HANDLE || g_hRSI_H4 == INVALID_HANDLE ||
+      g_hRSI_H1 == INVALID_HANDLE || g_hRSI_M5 == INVALID_HANDLE)
+   {
+      Print("WARNING: Some indicator handles failed to create (data may not be available yet)");
+   }
 
    //--- Create timer for checking every 10 seconds
    EventSetTimer(10);
@@ -137,7 +166,18 @@ int OnInit()
       Print("M1 confirm cooldown: ", IntegerToString(InpConfirmCooldown), " seconds");
    }
 
+   Print("API Key: ", (InpApiKey != "" ? "configured" : "NOT SET (no authentication)"));
+
    return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Build auth header string for API requests                         |
+//+------------------------------------------------------------------+
+string GetAuthHeader()
+{
+   if(InpApiKey == "") return "";
+   return "X-API-Key: " + InpApiKey + "\r\n";
 }
 
 //+------------------------------------------------------------------+
@@ -148,6 +188,17 @@ void OnDeinit(const int reason)
    EventKillTimer();
    ObjectDelete(0, "btnManualScan");
    ObjectDelete(0, "btnManualScanLabel");
+
+   //--- Release indicator handles
+   if(g_hATR_D1 != INVALID_HANDLE) IndicatorRelease(g_hATR_D1);
+   if(g_hATR_H4 != INVALID_HANDLE) IndicatorRelease(g_hATR_H4);
+   if(g_hATR_H1 != INVALID_HANDLE) IndicatorRelease(g_hATR_H1);
+   if(g_hATR_M5 != INVALID_HANDLE) IndicatorRelease(g_hATR_M5);
+   if(g_hRSI_D1 != INVALID_HANDLE) IndicatorRelease(g_hRSI_D1);
+   if(g_hRSI_H4 != INVALID_HANDLE) IndicatorRelease(g_hRSI_H4);
+   if(g_hRSI_H1 != INVALID_HANDLE) IndicatorRelease(g_hRSI_H1);
+   if(g_hRSI_M5 != INVALID_HANDLE) IndicatorRelease(g_hRSI_M5);
+
    Print(_Symbol, " AI Analyst EA deinitialized.");
 }
 
@@ -240,7 +291,7 @@ void PollWatchTrade()
    char   postData[];
    char   result[];
    string resultHeaders;
-   string headers = "";
+   string headers = GetAuthHeader();
 
    int res = WebRequest("GET", url, headers, 5000, postData, result, resultHeaders);
    if(res != 200)
@@ -395,7 +446,7 @@ bool SendConfirmation(string fileM1, string tradeId, string bias, double current
    //--- Closing boundary
    AppendStringToBody(postData, "\r\n--" + boundary + "--\r\n");
 
-   string headers = "Content-Type: multipart/form-data; boundary=" + boundary + "\r\n";
+   string headers = GetAuthHeader() + "Content-Type: multipart/form-data; boundary=" + boundary + "\r\n";
    char   result[];
    string resultHeaders;
 
@@ -685,7 +736,7 @@ void SendCloseReport(string tradeId, ulong ticket, double closePrice,
 
    char   result[];
    string resultHeaders;
-   string headers = "Content-Type: application/json\r\n";
+   string headers = GetAuthHeader() + "Content-Type: application/json\r\n";
 
    int res = WebRequest("POST", url, headers, 10000, postData, result, resultHeaders);
    if(res == 200)
@@ -1013,14 +1064,38 @@ string BuildMarketDataJSON(string session)
 }
 
 //+------------------------------------------------------------------+
-//| Get ATR value for a timeframe                                      |
+//| Map timeframe to pre-created ATR handle                           |
+//+------------------------------------------------------------------+
+int GetATRHandle(ENUM_TIMEFRAMES tf)
+{
+   if(tf == PERIOD_D1) return g_hATR_D1;
+   if(tf == PERIOD_H4) return g_hATR_H4;
+   if(tf == PERIOD_H1) return g_hATR_H1;
+   if(tf == PERIOD_M5) return g_hATR_M5;
+   return INVALID_HANDLE;
+}
+
+//+------------------------------------------------------------------+
+//| Map timeframe to pre-created RSI handle                           |
+//+------------------------------------------------------------------+
+int GetRSIHandle(ENUM_TIMEFRAMES tf)
+{
+   if(tf == PERIOD_D1) return g_hRSI_D1;
+   if(tf == PERIOD_H4) return g_hRSI_H4;
+   if(tf == PERIOD_H1) return g_hRSI_H1;
+   if(tf == PERIOD_M5) return g_hRSI_M5;
+   return INVALID_HANDLE;
+}
+
+//+------------------------------------------------------------------+
+//| Get ATR value for a timeframe (uses pre-created handle)           |
 //+------------------------------------------------------------------+
 double GetATR(ENUM_TIMEFRAMES tf, int period)
 {
-   int handle = iATR(_Symbol, tf, period);
+   int handle = GetATRHandle(tf);
    if(handle == INVALID_HANDLE)
    {
-      Print("ERROR: Failed to create ATR indicator for ", EnumToString(tf));
+      Print("ERROR: No ATR handle for ", EnumToString(tf));
       return 0;
    }
 
@@ -1030,24 +1105,21 @@ double GetATR(ENUM_TIMEFRAMES tf, int period)
    if(CopyBuffer(handle, 0, 0, 1, atrBuffer) <= 0)
    {
       Print("ERROR: Failed to copy ATR buffer for ", EnumToString(tf));
-      IndicatorRelease(handle);
       return 0;
    }
 
-   double val = atrBuffer[0];
-   IndicatorRelease(handle);
-   return val;
+   return atrBuffer[0];
 }
 
 //+------------------------------------------------------------------+
-//| Get RSI value for a timeframe                                      |
+//| Get RSI value for a timeframe (uses pre-created handle)           |
 //+------------------------------------------------------------------+
 double GetRSI(ENUM_TIMEFRAMES tf, int period)
 {
-   int handle = iRSI(_Symbol, tf, period, PRICE_CLOSE);
+   int handle = GetRSIHandle(tf);
    if(handle == INVALID_HANDLE)
    {
-      Print("ERROR: Failed to create RSI indicator for ", EnumToString(tf));
+      Print("ERROR: No RSI handle for ", EnumToString(tf));
       return 0;
    }
 
@@ -1057,13 +1129,10 @@ double GetRSI(ENUM_TIMEFRAMES tf, int period)
    if(CopyBuffer(handle, 0, 0, 1, rsiBuffer) <= 0)
    {
       Print("ERROR: Failed to copy RSI buffer for ", EnumToString(tf));
-      IndicatorRelease(handle);
       return 0;
    }
 
-   double val = rsiBuffer[0];
-   IndicatorRelease(handle);
-   return val;
+   return rsiBuffer[0];
 }
 
 //+------------------------------------------------------------------+
@@ -1188,7 +1257,7 @@ bool SendToServer(string fileD1, string fileH4, string fileH1, string fileM5, st
    AppendStringToBody(postData, "\r\n--" + boundary + "--\r\n");
 
    //--- Prepare headers
-   string headers = "Content-Type: multipart/form-data; boundary=" + boundary + "\r\n";
+   string headers = GetAuthHeader() + "Content-Type: multipart/form-data; boundary=" + boundary + "\r\n";
 
    //--- Send the request
    char   result[];
@@ -1233,7 +1302,7 @@ void PollPendingTrade()
    char   postData[];  // empty — this is GET
    char   result[];
    string resultHeaders;
-   string headers = "";
+   string headers = GetAuthHeader();
 
    int res = WebRequest("GET", url, headers, 5000, postData, result, resultHeaders);
    if(res != 200)
@@ -1464,7 +1533,7 @@ void SendExecutionReport(string tradeId, int ticket1, int ticket2,
 
    char   result[];
    string resultHeaders;
-   string headers = "Content-Type: application/json\r\n";
+   string headers = GetAuthHeader() + "Content-Type: application/json\r\n";
 
    int res = WebRequest("POST", url, headers, 10000, postData, result, resultHeaders);
    if(res == 200)
@@ -1474,13 +1543,45 @@ void SendExecutionReport(string tradeId, int ticket1, int ticket2,
 }
 
 //+------------------------------------------------------------------+
+//| Find exact JSON key position (not a suffix of a longer key)        |
+//| e.g. searching for "id" must NOT match "trade_id"                  |
+//+------------------------------------------------------------------+
+int JsonFindKey(string json, string key)
+{
+   string search = "\"" + key + "\"";
+   int pos = 0;
+   while(true)
+   {
+      pos = StringFind(json, search, pos);
+      if(pos < 0) return -1;
+
+      //--- Verify this is an exact key: the char before the opening quote
+      //--- must be { , or whitespace (not a letter/underscore from a longer key)
+      if(pos > 0)
+      {
+         ushort prevChar = StringGetCharacter(json, pos - 1);
+         // If previous char is alphanumeric or underscore, this is a partial match
+         if((prevChar >= 'a' && prevChar <= 'z') || (prevChar >= 'A' && prevChar <= 'Z') ||
+            (prevChar >= '0' && prevChar <= '9') || prevChar == '_')
+         {
+            pos += StringLen(search);
+            continue;  // Skip this match, search further
+         }
+      }
+      return pos;
+   }
+   return -1;
+}
+
+//+------------------------------------------------------------------+
 //| Simple JSON string parser — extract string value by key            |
 //+------------------------------------------------------------------+
 string JsonGetString(string json, string key)
 {
-   string search = "\"" + key + "\"";
-   int pos = StringFind(json, search);
+   int pos = JsonFindKey(json, key);
    if(pos < 0) return "";
+
+   string search = "\"" + key + "\"";
 
    // Find the colon after the key
    pos = StringFind(json, ":", pos + StringLen(search));
@@ -1502,9 +1603,10 @@ string JsonGetString(string json, string key)
 //+------------------------------------------------------------------+
 double JsonGetDouble(string json, string key)
 {
-   string search = "\"" + key + "\"";
-   int pos = StringFind(json, search);
+   int pos = JsonFindKey(json, key);
    if(pos < 0) return 0;
+
+   string search = "\"" + key + "\"";
 
    // Find the colon
    pos = StringFind(json, ":", pos + StringLen(search));

@@ -15,6 +15,7 @@ from telegram.ext import (
 )
 
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, MAX_DAILY_DRAWDOWN_PCT, MAX_OPEN_TRADES
+import shared_state
 from models import AnalysisResult, PendingTrade, WatchTrade, TradeExecutionReport, TradeSetup
 from news_filter import check_news_restriction, get_upcoming_news
 from pair_profiles import get_profile
@@ -67,8 +68,7 @@ async def check_risk_filters(symbol: str, setup: TradeSetup) -> tuple[bool, str]
     try:
         daily = get_daily_pnl()
         daily_pnl = daily["daily_pnl"]
-        from main import _last_market_data
-        md = _last_market_data.get(symbol)
+        md = shared_state.last_market_data.get(symbol)
         if md and md.account_balance > 0:
             drawdown_pct = abs(min(0, daily_pnl)) / md.account_balance * 100
             if drawdown_pct >= MAX_DAILY_DRAWDOWN_PCT:
@@ -590,9 +590,8 @@ async def _cmd_drawdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     drawdown_pct = 0.0
     limit_pct = MAX_DAILY_DRAWDOWN_PCT
     try:
-        from main import _last_market_data
-        if _last_market_data:
-            md = next(iter(_last_market_data.values()))
+        if shared_state.last_market_data:
+            md = next(iter(shared_state.last_market_data.values()))
             if md.account_balance > 0:
                 balance_str = f"${md.account_balance:,.2f}"
                 drawdown_pct = abs(min(0, daily["daily_pnl"])) / md.account_balance * 100

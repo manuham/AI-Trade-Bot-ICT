@@ -4,6 +4,8 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
+import sqlite3
 from datetime import date
 from typing import Optional
 
@@ -17,9 +19,51 @@ from trade_tracker import get_recent_closed_for_pair
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Daily fundamentals cache  (one web-search per pair per day)
+# Daily fundamentals cache  (in-memory + SQLite persistence)
+# Survives Docker restarts by persisting to /data/fundamentals_cache.db
 # ---------------------------------------------------------------------------
 _fundamentals_cache: dict[str, dict] = {}  # key = "GBPJPY:2026-02-09"
+_CACHE_DB_DIR = os.getenv("DATA_DIR", "/data")
+_CACHE_DB_PATH = os.path.join(_CACHE_DB_DIR, "fundamentals_cache.db")
+
+
+def _init_cache_db():
+    """Create the fundamentals cache table if it doesn't exist."""
+    os.makedirs(_CACHE_DB_DIR, exist_ok=True)
+    conn = sqlite3.connect(_CACHE_DB_PATH, timeout=5)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS fundamentals_cache (
+            cache_key TEXT PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            cache_date TEXT NOT NULL,
+            text_content TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def _load_cache_from_db():
+    """Load today's cached fundamentals from SQLite into memory."""
+    try:
+        _init_cache_db()
+        today = date.today().isoformat()
+        conn = sqlite3.connect(_CACHE_DB_PATH, timeout=5)
+        rows = conn.execute(
+            "SELECT cache_key, text_content FROM fundamentals_cache WHERE cache_date = ?",
+            (today,),
+        ).fetchall()
+        conn.close()
+        for key, text in rows:
+            _fundamentals_cache[key] = {"text": text, "date": today}
+        if rows:
+            logger.info("Loaded %d cached fundamentals from disk", len(rows))
+    except Exception as e:
+        logger.warning("Failed to load fundamentals cache from disk: %s", e)
+
+
+# Load on module import (runs once at server startup)
+_load_cache_from_db()
 
 
 def _cache_key(symbol: str) -> str:
@@ -33,8 +77,23 @@ def get_cached_fundamentals(symbol: str) -> Optional[str]:
 
 
 def store_fundamentals(symbol: str, text: str):
-    """Cache fundamentals text for today."""
-    _fundamentals_cache[_cache_key(symbol)] = {"text": text, "date": date.today().isoformat()}
+    """Cache fundamentals text for today (memory + disk)."""
+    key = _cache_key(symbol)
+    today = date.today().isoformat()
+    _fundamentals_cache[key] = {"text": text, "date": today}
+
+    # Persist to SQLite
+    try:
+        conn = sqlite3.connect(_CACHE_DB_PATH, timeout=5)
+        conn.execute(
+            "INSERT OR REPLACE INTO fundamentals_cache (cache_key, symbol, cache_date, text_content) VALUES (?, ?, ?, ?)",
+            (key, symbol, today, text),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning("Failed to persist fundamentals cache: %s", e)
+
     logger.info("Fundamentals cached for %s (%d chars)", symbol, len(text))
 
 
