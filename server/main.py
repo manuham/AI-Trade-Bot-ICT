@@ -363,8 +363,8 @@ app.add_middleware(
 @app.middleware("http")
 async def verify_api_key(request: Request, call_next):
     """Check X-API-Key header on all endpoints except /health and /webhook/telegram."""
-    # Skip auth for health check and Telegram webhook
-    if request.url.path in ("/health", "/webhook/telegram"):
+    # Skip auth for health check, Telegram webhook, and public endpoints
+    if request.url.path in ("/health", "/webhook/telegram") or request.url.path.startswith("/public/"):
         return await call_next(request)
 
     # Skip auth if no API_KEY configured (backward compatible)
@@ -706,6 +706,21 @@ async def trade_executed(report: TradeExecutionReport):
     except Exception as e:
         logger.error("[%s] Failed to send trade confirmation: %s", report.symbol, e)
 
+    # --- Phase 4: Public feed + Google Sheets ---
+    if report.status == "executed":
+        try:
+            from public_feed import format_public_trade_alert, post_to_public_channel, sync_trade_to_sheets
+            from trade_tracker import get_recent_trades
+            # Get the full trade record for public feed
+            trades = get_recent_trades(limit=5, symbol=report.symbol)
+            trade = next((t for t in trades if t.get("id") == report.trade_id), None)
+            if trade:
+                public_msg = format_public_trade_alert(trade, event="opened")
+                await post_to_public_channel(public_msg)
+                sync_trade_to_sheets(trade)
+        except Exception as e:
+            logger.error("[%s] Public feed error on trade execution: %s", report.symbol, e)
+
     return {"status": "ok", "message": "Execution report received"}
 
 
@@ -734,6 +749,24 @@ async def trade_closed(report: TradeCloseReport):
         await send_trade_close_notification(report)
     except Exception as e:
         logger.error("[%s] Failed to send close notification: %s", report.symbol, e)
+
+    # --- Phase 4: Public feed + Google Sheets update ---
+    try:
+        from public_feed import format_public_trade_alert, post_to_public_channel, update_trade_in_sheets
+        from trade_tracker import get_recent_trades
+        trades = get_recent_trades(limit=10, symbol=report.symbol)
+        trade = next((t for t in trades if t.get("id") == report.trade_id), None)
+        if trade and trade.get("status") == "closed":
+            event = {
+                "full_win": "tp2_hit",
+                "partial_win": "tp1_hit",
+                "loss": "sl_hit",
+            }.get(trade.get("outcome", ""), "closed")
+            public_msg = format_public_trade_alert(trade, event=event)
+            await post_to_public_channel(public_msg)
+            update_trade_in_sheets(trade)
+    except Exception as e:
+        logger.error("[%s] Public feed error on trade close: %s", report.symbol, e)
 
     return {"status": "ok", "message": "Close report received"}
 
@@ -990,10 +1023,191 @@ async def _system_tasks_loop():
             elif now_mez.weekday() != 6 or mez_hour != 19:
                 _weekly_report_sent = False
 
+            # --- Monthly PDF report (1st of month, 08:00 MEZ) ---
+            if now_mez.day == 1 and mez_hour == 8 and now_mez.minute < 5:
+                if not getattr(_system_tasks_loop, "_monthly_report_sent", False):
+                    _system_tasks_loop._monthly_report_sent = True
+                    # Report for the PREVIOUS month
+                    prev = now_mez - timedelta(days=1)
+                    try:
+                        from monthly_report import send_monthly_report_telegram
+                        await send_monthly_report_telegram(prev.year, prev.month)
+                        logger.info("Monthly report sent for %d-%02d", prev.year, prev.month)
+                    except Exception as e:
+                        logger.error("Failed to send monthly report: %s", e)
+            elif now_mez.day != 1 or mez_hour != 8:
+                _system_tasks_loop._monthly_report_sent = False
+
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.error("System tasks loop error: %s", e)
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Public P&L endpoints (no auth required)
+# ---------------------------------------------------------------------------
+@app.get("/public/trades")
+async def public_trades(limit: int = 50, symbol: str = None):
+    """Public trade history — no API key required.
+    Shows all executed/closed trades with full transparency."""
+    from public_feed import get_public_trade_history
+    trades = get_public_trade_history(limit=limit, symbol=symbol)
+    return {"trades": trades, "count": len(trades)}
+
+
+@app.get("/public/stats")
+async def public_stats(days: int = 30):
+    """Public performance stats — no API key required."""
+    from public_feed import get_public_stats
+    return get_public_stats(days=days)
+
+
+@app.get("/public/report/{year}/{month}")
+async def public_monthly_report(year: int, month: int):
+    """Download the monthly PDF performance report."""
+    from monthly_report import generate_monthly_pdf
+    from fastapi.responses import Response
+
+    pdf_bytes = generate_monthly_pdf(year, month)
+    if not pdf_bytes:
+        return JSONResponse(status_code=404, content={"error": "Could not generate report"})
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=AI_Analyst_Report_{year}_{month:02d}.pdf"},
+    )
+
+
+@app.get("/public/feed")
+async def public_feed_html():
+    """Public HTML page showing all trades — embeddable, shareable."""
+    from public_feed import get_public_trade_history, get_public_stats
+    from fastapi.responses import HTMLResponse
+
+    trades = get_public_trade_history(limit=100)
+    stats = get_public_stats(days=30)
+
+    # Build trade rows
+    trade_rows = ""
+    for t in trades:
+        outcome = t.get("outcome", "open")
+        pnl = t.get("pnl_pips", 0) or 0
+        pnl_class = "win" if pnl > 0 else ("loss" if pnl < 0 else "open")
+        outcome_display = {
+            "full_win": "Full Win", "partial_win": "Partial Win",
+            "loss": "Loss", "open": "Open", "breakeven": "BE",
+        }.get(outcome, outcome)
+
+        trade_rows += f"""
+        <tr class="{pnl_class}">
+            <td>{(t.get('created_at') or '')[:10]}</td>
+            <td><strong>{t.get('symbol', '')}</strong></td>
+            <td>{(t.get('bias') or '').upper()}</td>
+            <td>{t.get('actual_entry', 0):.3f}</td>
+            <td>{t.get('stop_loss', 0):.3f}</td>
+            <td>{t.get('tp1', 0):.3f} / {t.get('tp2', 0):.3f}</td>
+            <td>{t.get('checklist_score', 'N/A')}</td>
+            <td>{(t.get('confidence') or '').upper()}</td>
+            <td>{outcome_display}</td>
+            <td class="{pnl_class}">{pnl:+.1f}</td>
+        </tr>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Trade Analyst - Public P&L</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+               background: #0a0a0f; color: #e0e0e0; padding: 20px; }}
+        .container {{ max-width: 1200px; margin: 0 auto; }}
+        h1 {{ color: #fff; margin-bottom: 5px; }}
+        .subtitle {{ color: #888; margin-bottom: 30px; font-size: 14px; }}
+        .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                       gap: 15px; margin-bottom: 30px; }}
+        .stat-card {{ background: #151520; border: 1px solid #252530; border-radius: 8px;
+                      padding: 15px; text-align: center; }}
+        .stat-value {{ font-size: 24px; font-weight: bold; color: #fff; }}
+        .stat-label {{ font-size: 12px; color: #888; margin-top: 4px; }}
+        .stat-value.positive {{ color: #22c55e; }}
+        .stat-value.negative {{ color: #ef4444; }}
+        table {{ width: 100%; border-collapse: collapse; background: #151520;
+                 border-radius: 8px; overflow: hidden; }}
+        th {{ background: #1a1a2e; padding: 12px 8px; text-align: left;
+              font-size: 12px; color: #888; text-transform: uppercase; }}
+        td {{ padding: 10px 8px; border-bottom: 1px solid #1a1a2e; font-size: 13px; }}
+        tr:hover {{ background: #1a1a28; }}
+        .win {{ color: #22c55e; }}
+        .loss {{ color: #ef4444; }}
+        .open {{ color: #3b82f6; }}
+        .footer {{ text-align: center; margin-top: 30px; color: #555; font-size: 12px; }}
+        .badge {{ display: inline-block; padding: 2px 8px; border-radius: 4px;
+                  font-size: 11px; font-weight: bold; }}
+        .badge-high {{ background: #22c55e22; color: #22c55e; }}
+        .badge-medium {{ background: #eab30822; color: #eab308; }}
+        .badge-low {{ background: #ef444422; color: #ef4444; }}
+        .refresh {{ color: #555; font-size: 12px; margin-bottom: 15px; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AI Trade Analyst &mdash; Public P&L</h1>
+        <p class="subtitle">ICT Methodology &bull; AI-Powered Analysis &bull; Full Transparency</p>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value">{stats.get('total_trades', 0)}</div>
+                <div class="stat-label">Trades (30d)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value {'positive' if stats.get('win_rate', 0) >= 55 else ''}">{stats.get('win_rate', 0):.1f}%</div>
+                <div class="stat-label">Win Rate</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value {'positive' if stats.get('total_pnl_pips', 0) >= 0 else 'negative'}">{stats.get('total_pnl_pips', 0):+.1f}</div>
+                <div class="stat-label">Total Pips (30d)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{stats.get('wins', 0)}/{stats.get('losses', 0)}</div>
+                <div class="stat-label">Wins / Losses</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value positive">+{stats.get('avg_win_pips', 0):.1f}</div>
+                <div class="stat-label">Avg Win (pips)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value negative">{stats.get('avg_loss_pips', 0):.1f}</div>
+                <div class="stat-label">Avg Loss (pips)</div>
+            </div>
+        </div>
+
+        <p class="refresh">Last 100 trades &bull; Auto-updates with each trade</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th><th>Pair</th><th>Bias</th><th>Entry</th>
+                    <th>SL</th><th>TP1/TP2</th><th>Checklist</th>
+                    <th>Confidence</th><th>Outcome</th><th>P&L Pips</th>
+                </tr>
+            </thead>
+            <tbody>
+                {trade_rows if trade_rows else '<tr><td colspan="10" style="text-align:center;color:#555;">No trades yet</td></tr>'}
+            </tbody>
+        </table>
+
+        <div class="footer">
+            <p>Every trade shown &mdash; wins AND losses &bull; No cherry-picking</p>
+            <p>Powered by Claude AI &bull; ICT Methodology &bull; Fully Automated</p>
+        </div>
+    </div>
+</body>
+</html>"""
+
+    return HTMLResponse(content=html)
 
 
 # ---------------------------------------------------------------------------
