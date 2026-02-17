@@ -243,7 +243,7 @@ def get_weekly_performance_report(symbol: Optional[str] = None) -> dict:
         rows = conn.execute(f"SELECT * FROM trades {where}", params).fetchall()
 
     if not rows:
-        return {"total": 0, "message": "No closed trades in the last 7 days."}
+        return {"total_trades": 0, "message": "No closed trades in the last 7 days."}
 
     trades = [dict(r) for r in rows]
     total = len(trades)
@@ -258,14 +258,15 @@ def get_weekly_performance_report(symbol: Optional[str] = None) -> dict:
             if not bucket:
                 continue
             if bucket not in buckets:
-                buckets[bucket] = {"wins": 0, "total": 0, "pnl_pips": 0}
-            buckets[bucket]["total"] += 1
-            buckets[bucket]["pnl_pips"] += t.get("pnl_pips") or 0
+                buckets[bucket] = {"wins": 0, "count": 0, "total_pnl": 0}
+            buckets[bucket]["count"] += 1
+            buckets[bucket]["total_pnl"] += t.get("pnl_pips") or 0
             if t["outcome"] in ("full_win", "partial_win"):
                 buckets[bucket]["wins"] += 1
         # Calculate win rates
         for b in buckets.values():
-            b["win_rate"] = (b["wins"] / b["total"] * 100) if b["total"] else 0
+            b["win_rate"] = (b["wins"] / b["count"] * 100) if b["count"] else 0
+            b["total_pnl"] = round(b["total_pnl"], 1)
         return buckets
 
     def _checklist_bucket(t):
@@ -285,16 +286,26 @@ def get_weekly_performance_report(symbol: Optional[str] = None) -> dict:
         else:
             return "0-3"
 
+    # Calculate average R:R from trades that have TP data
+    rr_values = []
+    for t in trades:
+        tp1_pips = t.get("tp1_pips") or 0
+        sl_pips = t.get("sl_pips") or 0
+        if sl_pips > 0 and tp1_pips > 0:
+            rr_values.append(tp1_pips / sl_pips)
+    avg_rr = round(sum(rr_values) / len(rr_values), 2) if rr_values else 0
+
     return {
-        "total": total,
+        "total_trades": total,
         "wins": len(wins),
         "losses": len(losses),
         "win_rate": (len(wins) / total * 100) if total else 0,
         "total_pnl_pips": total_pnl,
-        "by_checklist": _bucket_stats(_checklist_bucket),
+        "avg_rr": avg_rr,
+        "by_checklist_score": _bucket_stats(_checklist_bucket),
         "by_confidence": _bucket_stats(lambda t: t.get("confidence", "")),
         "by_entry_status": _bucket_stats(lambda t: t.get("entry_status", "")),
-        "by_trend_alignment": _bucket_stats(lambda t: (t.get("trend_alignment", "") or "")[:3]),  # e.g., "4/4"
+        "by_trend_alignment": _bucket_stats(lambda t: (t.get("trend_alignment", "") or "")[:3]),
         "by_price_zone": _bucket_stats(lambda t: t.get("price_zone", "")),
         "by_bias": _bucket_stats(lambda t: t.get("bias", "")),
     }
@@ -667,11 +678,14 @@ def get_open_currency_exposure() -> dict[str, list[str]]:
 def check_correlation_conflict(symbol: str, bias: str) -> Optional[str]:
     """Check if a new trade would create dangerous currency correlation.
 
-    Only flags when a DIFFERENT pair creates overlapping currency exposure.
-    Same-pair conflicts are not correlation — that's just adding to the same position.
+    Enforces three rules:
+    1. Currency overlap: flags when a DIFFERENT pair has overlapping exposure
+    2. GBP pair group: max 1 open trade across all GBP pairs (GBPJPY, GBPUSD, etc.)
+    3. USD pair group: max 1 trade in same direction across USD-involved pairs
 
     Returns warning message if conflict found, None if safe.
     """
+    open_trades = get_open_trades()
     exposure = get_open_currency_exposure()
     base = symbol[:3]
     quote = symbol[3:]
@@ -686,23 +700,55 @@ def check_correlation_conflict(symbol: str, bias: str) -> Optional[str]:
 
     conflicts = []
 
-    # Check base currency — only from DIFFERENT pairs
+    # --- Rule 1: Currency overlap (original logic) ---
     for existing in exposure.get(base, []):
         existing_symbol = existing.split(":")[0]
         if existing_symbol == symbol:
-            continue  # Skip same pair — not a correlation issue
-        existing_dir = existing.split(":")[1].split("_")[0]  # "long" or "short"
+            continue
+        existing_dir = existing.split(":")[1].split("_")[0]
         if existing_dir == new_base_dir:
             conflicts.append(f"{base} already {new_base_dir} via {existing_symbol}")
 
-    # Check quote currency — only from DIFFERENT pairs
     for existing in exposure.get(quote, []):
         existing_symbol = existing.split(":")[0]
         if existing_symbol == symbol:
-            continue  # Skip same pair
+            continue
         existing_dir = existing.split(":")[1].split("_")[0]
         if existing_dir == new_quote_dir:
             conflicts.append(f"{quote} already {new_quote_dir} via {existing_symbol}")
+
+    # --- Rule 2: GBP pair group — max 1 open trade across all GBP pairs ---
+    if "GBP" in symbol:
+        gbp_open = [t for t in open_trades if "GBP" in t["symbol"] and t["symbol"] != symbol]
+        if gbp_open:
+            existing_pairs = ", ".join(set(t["symbol"] for t in gbp_open))
+            conflicts.append(f"GBP pair limit: already have open trade on {existing_pairs}")
+
+    # --- Rule 3: USD pair group — max 1 trade in same USD direction ---
+    if "USD" in symbol:
+        # Determine USD direction for the new trade
+        if base == "USD":
+            new_usd_dir = new_base_dir  # e.g., USDJPY long = long USD
+        else:
+            new_usd_dir = new_quote_dir  # e.g., EURUSD long = short USD
+
+        for t in open_trades:
+            t_symbol = t["symbol"]
+            if "USD" not in t_symbol or t_symbol == symbol:
+                continue
+            t_base = t_symbol[:3]
+            t_bias = t["bias"]
+            # Determine USD direction for existing trade
+            if t_base == "USD":
+                existing_usd_dir = "long" if t_bias == "long" else "short"
+            else:
+                existing_usd_dir = "short" if t_bias == "long" else "long"
+
+            if existing_usd_dir == new_usd_dir:
+                conflicts.append(
+                    f"USD same-direction limit: {t_symbol} already {existing_usd_dir} USD"
+                )
+                break  # One conflict is enough
 
     if conflicts:
         return "Correlation risk: " + "; ".join(conflicts)

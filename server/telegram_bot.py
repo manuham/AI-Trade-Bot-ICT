@@ -980,13 +980,13 @@ def _format_weekly_report(report: dict) -> str:
         "\U0001f4ca Weekly Performance Report",
         "\u2501" * 25,
         "",
-        f"Trades: {report['total']} | Wins: {report['wins']} | Losses: {report['losses']}",
+        f"Trades: {report['total_trades']} | Wins: {report['wins']} | Losses: {report['losses']}",
         f"\U0001f3af Win Rate: {report['win_rate']:.0f}%",
         f"{pnl_emoji} P&L: {report['total_pnl_pips']:+.1f} pips",
     ]
 
     section_names = {
-        "by_checklist": "\U0001f4cb By Checklist Score",
+        "by_checklist_score": "\U0001f4cb By Checklist Score",
         "by_confidence": "\U0001f525 By Confidence",
         "by_entry_status": "\U0001f4cd By Entry Status",
         "by_trend_alignment": "\U0001f4c8 By Trend Alignment",
@@ -1003,8 +1003,8 @@ def _format_weekly_report(report: dict) -> str:
             if not bucket:
                 continue
             lines.append(
-                f"  {bucket}: {stats['wins']}/{stats['total']}W "
-                f"({stats['win_rate']:.0f}%) | {stats['pnl_pips']:+.1f}p"
+                f"  {bucket}: {stats['wins']}/{stats['count']}W "
+                f"({stats['win_rate']:.0f}%) | {stats['total_pnl']:+.1f}p"
             )
 
     return "\n".join(lines)

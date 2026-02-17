@@ -298,7 +298,7 @@ async def lifespan(app: FastAPI):
     # --- Check if today's scan was missed ---
     try:
         now_mez = datetime.now(timezone(timedelta(hours=1)))
-        for symbol in ["GBPJPY"]:
+        for symbol in config.ACTIVE_PAIRS:
             profile = get_profile(symbol)
             kz_start = profile.get("kill_zone_start_mez", 8)
             kz_end = profile.get("kill_zone_end_mez", 20)

@@ -462,12 +462,12 @@ elif page == "⚠️ Risk Panel":
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        today_pnl = daily.get("total_pnl_pips", 0)
+        today_pnl = daily.get("daily_pnl", 0)
         color = "normal" if today_pnl >= 0 else "inverse"
-        st.metric("Today's P&L", f"{today_pnl:+.1f} pips", delta_color=color)
+        st.metric("Today's P&L ($)", f"${today_pnl:+.2f}", delta_color=color)
     with c2:
-        today_money = daily.get("total_pnl_money", 0)
-        st.metric("Today's P&L ($)", f"${today_money:+.2f}")
+        today_count = daily.get("closed_trades_today", 0)
+        st.metric("Trades Closed Today", today_count)
     with c3:
         st.metric("Max Daily DD Limit", f"{max_dd_pct}%")
 
