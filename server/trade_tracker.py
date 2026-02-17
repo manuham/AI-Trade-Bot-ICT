@@ -145,6 +145,19 @@ def init_db():
                 created_at TEXT
             );
         """)
+    # --- Backtest tables ---
+    try:
+        from backtest import init_backtest_tables
+        init_backtest_tables()
+    except Exception as e:
+        logger.warning("Could not init backtest tables: %s", e)
+    # --- Historical data tables ---
+    try:
+        from historical_data import init_history_tables
+        init_history_tables()
+    except Exception as e:
+        logger.warning("Could not init history tables: %s", e)
+
     logger.info("Trade tracker database initialized at %s", DB_PATH)
 
 

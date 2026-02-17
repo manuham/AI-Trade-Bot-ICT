@@ -729,6 +729,161 @@ async def trade_closed(report: TradeCloseReport):
     return {"status": "ok", "message": "Close report received"}
 
 
+# ---------------------------------------------------------------------------
+# Backtest endpoints
+# ---------------------------------------------------------------------------
+@app.post("/backtest/import")
+async def backtest_import(
+    file: UploadFile = File(...),
+    symbol: str = Form("GBPJPY"),
+    timeframe: str = Form("M1"),
+    resample: bool = Form(True),
+):
+    """Upload a CSV file with historical OHLC data from MT5."""
+    from historical_data import import_csv_to_db, resample_and_store, get_candle_count, get_date_range
+
+    # Save uploaded file temporarily
+    upload_dir = Path(os.getenv("DATA_DIR", "/data")) / "history"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    filepath = upload_dir / f"{symbol}_{timeframe}_{file.filename}"
+
+    with open(filepath, "wb") as f:
+        content = await file.read()
+        f.write(content)
+
+    try:
+        count = import_csv_to_db(str(filepath), symbol, timeframe)
+        if count == 0:
+            return JSONResponse(status_code=400, content={"error": "No valid rows found in CSV"})
+
+        result = {"imported": count, "symbol": symbol, "timeframe": timeframe}
+
+        # Resample to higher timeframes
+        if resample and timeframe == "M1":
+            resampled = resample_and_store(symbol)
+            result["resampled"] = resampled
+
+        # Add stats
+        result["total_m1_candles"] = get_candle_count(symbol, "M1")
+        date_range = get_date_range(symbol, "M1")
+        result["date_range"] = {"from": date_range[0], "to": date_range[1]}
+
+        logger.info("Imported %d %s candles for %s", count, timeframe, symbol)
+        return result
+
+    except Exception as e:
+        logger.error("CSV import failed: %s", e)
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/backtest/run")
+async def backtest_run_endpoint(request: Request):
+    """Run a batch backtest with multiple setups."""
+    from backtest import run_backtest
+    from models import BacktestRequest
+
+    try:
+        body = await request.json()
+        req = BacktestRequest(**body)
+
+        setups = [s.model_dump() for s in req.setups]
+        result = run_backtest(
+            symbol=req.symbol,
+            setups=setups,
+            kill_zone_end_hour=req.kill_zone_end_hour,
+            timezone_offset=req.timezone_offset,
+            tp1_close_pct=req.tp1_close_pct,
+            notes=req.notes,
+        )
+
+        return result
+    except Exception as e:
+        logger.error("Backtest run failed: %s", e)
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/backtest/test")
+async def backtest_test_endpoint(request: Request):
+    """Test a single hypothetical setup against one date."""
+    from backtest import test_setup
+    from models import TestSetupRequest
+
+    try:
+        body = await request.json()
+        req = TestSetupRequest(**body)
+
+        result = test_setup(
+            symbol=req.symbol,
+            date=req.date,
+            bias=req.bias,
+            entry_min=req.entry_min,
+            entry_max=req.entry_max,
+            stop_loss=req.stop_loss,
+            tp1=req.tp1,
+            tp2=req.tp2,
+            sl_pips=req.sl_pips,
+            search_start=req.search_start,
+            kill_zone_end_hour=req.kill_zone_end_hour,
+            timezone_offset=req.timezone_offset,
+            tp1_close_pct=req.tp1_close_pct,
+            checklist_score=req.checklist_score,
+            confidence=req.confidence,
+        )
+
+        return result.to_dict()
+    except Exception as e:
+        logger.error("Setup test failed: %s", e)
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/backtest/runs")
+async def backtest_runs_list(limit: int = 20):
+    """List recent backtest runs."""
+    from backtest import get_backtest_runs
+    return get_backtest_runs(limit=limit)
+
+
+@app.get("/backtest/results/{run_id}")
+async def backtest_results(run_id: str):
+    """Get full results and report for a backtest run."""
+    from backtest import get_backtest_run, get_backtest_trades
+    from backtest_report import generate_report
+
+    run = get_backtest_run(run_id)
+    if not run:
+        return JSONResponse(status_code=404, content={"error": "Run not found"})
+
+    trades = get_backtest_trades(run_id)
+    report = generate_report(run, trades)
+
+    return {
+        "run": run,
+        "trades": trades,
+        "report": report,
+    }
+
+
+@app.get("/backtest/history_stats")
+async def backtest_history_stats(symbol: str = "GBPJPY"):
+    """Get stats about available historical data."""
+    from historical_data import get_candle_count, get_date_range, get_trading_dates
+
+    m1_count = get_candle_count(symbol, "M1")
+    date_range = get_date_range(symbol, "M1")
+    trading_dates = get_trading_dates(symbol, "M1")
+
+    return {
+        "symbol": symbol,
+        "m1_candles": m1_count,
+        "date_range": {"from": date_range[0], "to": date_range[1]},
+        "trading_days": len(trading_dates),
+        "timeframes": {
+            tf: get_candle_count(symbol, tf)
+            for tf in ["M1", "M5", "H1", "H4", "D1"]
+        },
+    }
+
+
 @app.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
     """Telegram webhook endpoint (alternative to polling)."""

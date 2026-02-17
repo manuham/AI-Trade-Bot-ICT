@@ -158,3 +158,58 @@ class TradeCloseReport(BaseModel):
     close_price: float = 0
     close_reason: str = ""     # "tp1", "tp2", "sl", "manual", "cancelled"
     profit: float = 0          # monetary P&L
+
+
+# ---------------------------------------------------------------------------
+# Backtest models
+# ---------------------------------------------------------------------------
+class BacktestSetup(BaseModel):
+    """A single trade setup to simulate in a backtest."""
+    date: str                          # "YYYY-MM-DD"
+    bias: str                          # "long" or "short"
+    entry_min: float
+    entry_max: float
+    stop_loss: float
+    tp1: float
+    tp2: float
+    sl_pips: float
+    search_start: str = ""             # Optional: start searching from this time
+    checklist_score: str = ""          # e.g. "10/12"
+    confidence: str = ""               # "HIGH", "MEDIUM", "LOW"
+    tp1_close_pct: float = 50.0
+
+
+class BacktestRequest(BaseModel):
+    """Request to run a batch backtest."""
+    symbol: str = "GBPJPY"
+    setups: list[BacktestSetup]
+    kill_zone_end_hour: int = 20
+    timezone_offset: int = 1
+    tp1_close_pct: float = 50.0
+    notes: str = ""
+
+
+class TestSetupRequest(BaseModel):
+    """Request to test a single setup against one date."""
+    symbol: str = "GBPJPY"
+    date: str                          # "YYYY-MM-DD"
+    bias: str
+    entry_min: float
+    entry_max: float
+    stop_loss: float
+    tp1: float
+    tp2: float
+    sl_pips: float
+    search_start: str = ""
+    kill_zone_end_hour: int = 20
+    timezone_offset: int = 1
+    tp1_close_pct: float = 50.0
+    checklist_score: str = ""
+    confidence: str = ""
+
+
+class HistoryImportRequest(BaseModel):
+    """Request to import historical data CSV."""
+    symbol: str = "GBPJPY"
+    timeframe: str = "M1"
+    resample: bool = True              # Also resample to M5/H1/H4/D1 after import

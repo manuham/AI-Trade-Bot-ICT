@@ -660,6 +660,7 @@ async def _cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/report - Weekly performance breakdown by pattern\n"
         "/drawdown - Daily P&L and risk status\n"
         "/news - Show upcoming high-impact news events\n"
+        "/backtest - Show backtest results & data stats\n"
         "/reset - Force-close stale trades in DB\n"
         "/status - Show bot status for all pairs\n"
         "/help - Show this help message\n\n"
@@ -1019,6 +1020,57 @@ async def _cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 
+async def _cmd_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show latest backtest run summary or history data stats."""
+    try:
+        from backtest import get_backtest_runs, get_backtest_run, get_backtest_trades
+        from backtest_report import generate_report, format_telegram_report
+        from historical_data import get_candle_count, get_date_range
+
+        # First show data availability
+        m1_count = get_candle_count("GBPJPY", "M1")
+        date_range = get_date_range("GBPJPY", "M1")
+
+        lines = [
+            "📊 *Backtest System*",
+            f"{'━' * 28}",
+            "",
+            "*Historical Data:*",
+        ]
+
+        if m1_count > 0:
+            lines.append(f"  M1 candles: {m1_count:,}")
+            lines.append(f"  Range: {date_range[0][:10]} → {date_range[1][:10]}")
+        else:
+            lines.append("  ⚠️ No historical data loaded yet")
+            lines.append("  Upload M1 CSV via /backtest\\_import")
+
+        # Show latest backtest run
+        runs = get_backtest_runs(limit=1)
+        if runs:
+            run = runs[0]
+            trades = get_backtest_trades(run["id"])
+            report = generate_report(run, trades)
+            telegram_text = format_telegram_report(report)
+
+            lines.append("")
+            lines.append("*Latest Backtest Run:*")
+            lines.append(telegram_text)
+        else:
+            lines.append("")
+            lines.append("_No backtest runs yet._")
+            lines.append("Use the API to run backtests: POST /backtest/run")
+
+        await update.message.reply_text(
+            "\n".join(lines),
+            parse_mode="Markdown",
+        )
+
+    except Exception as e:
+        logger.error("Backtest command error: %s", e)
+        await update.message.reply_text(f"❌ Error: {e}")
+
+
 def create_bot_app() -> Application:
     """Create and configure the Telegram bot application."""
     global _app
@@ -1038,6 +1090,7 @@ def create_bot_app() -> Application:
     _app.add_handler(CommandHandler("status", _cmd_status))
     _app.add_handler(CommandHandler("help", _cmd_help))
     _app.add_handler(CommandHandler("report", _cmd_report))
+    _app.add_handler(CommandHandler("backtest", _cmd_backtest))
     _app.add_handler(CallbackQueryHandler(_handle_callback))
 
     logger.info("Telegram bot application created")
