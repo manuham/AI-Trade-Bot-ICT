@@ -56,8 +56,21 @@ def _api_get(path: str, params: dict = None) -> dict:
 # ---------------------------------------------------------------------------
 # Sidebar navigation
 # ---------------------------------------------------------------------------
-st.sidebar.title("📈 GBPJPY AI Analyst")
+# Get active pairs from config (or fallback)
+try:
+    from config import ACTIVE_PAIRS
+except ImportError:
+    ACTIVE_PAIRS = ["GBPJPY"]
+
+st.sidebar.title("📈 AI Trade Analyst")
 st.sidebar.markdown("---")
+
+# Pair selector
+selected_pair = st.sidebar.selectbox(
+    "Trading Pair",
+    ["ALL"] + ACTIVE_PAIRS,
+    index=0,
+)
 
 page = st.sidebar.radio(
     "Navigation",
@@ -67,7 +80,8 @@ page = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.caption("v3.0 — ICT Methodology")
+st.sidebar.caption(f"v3.0 — ICT Methodology")
+st.sidebar.caption(f"Active: {', '.join(ACTIVE_PAIRS)}")
 st.sidebar.caption(f"Updated: {datetime.now().strftime('%H:%M:%S')}")
 
 
@@ -153,7 +167,8 @@ elif page == "📊 Performance":
     with col1:
         days = st.selectbox("Period", [7, 14, 30, 90], index=2)
 
-    stats = trade_tracker.get_stats(days=days)
+    symbol_filter = None if selected_pair == "ALL" else selected_pair
+    stats = trade_tracker.get_stats(symbol=symbol_filter, days=days)
 
     if stats.get("total_trades", 0) == 0:
         st.info(f"No trades in the last {days} days.")
@@ -255,7 +270,8 @@ elif page == "📒 Trade Journal":
     with col3:
         filter_outcome = st.selectbox("Outcome", ["All", "full_win", "partial_win", "loss", "breakeven", "open"])
 
-    trades = trade_tracker.get_recent_trades(limit=100)
+    symbol_filter = None if selected_pair == "ALL" else selected_pair
+    trades = trade_tracker.get_recent_trades(limit=100, symbol=symbol_filter)
 
     # Apply filters
     if filter_bias != "All":
@@ -493,7 +509,8 @@ elif page == "⚠️ Risk Panel":
 elif page == "📋 Analysis Stats":
     st.title("📋 Analysis Stats")
 
-    report = trade_tracker.get_weekly_performance_report()
+    symbol_filter = None if selected_pair == "ALL" else selected_pair
+    report = trade_tracker.get_weekly_performance_report(symbol=symbol_filter)
 
     if not report or report.get("total_trades", 0) == 0:
         st.info("No trade data for weekly analysis.")

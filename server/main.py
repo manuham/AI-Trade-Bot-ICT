@@ -97,7 +97,7 @@ async def _run_scan_from_telegram(symbol: str = ""):
     if not symbol and _last_results:
         symbol = max(_last_results, key=lambda s: _last_results[s].market_summary != "")
     if not symbol:
-        symbol = "GBPJPY"
+        symbol = config.ACTIVE_PAIRS[0] if config.ACTIVE_PAIRS else "GBPJPY"
 
     screenshots = _last_screenshots.get(symbol)
     market_data = shared_state.last_market_data.get(symbol)
@@ -951,16 +951,23 @@ async def _system_tasks_loop():
                     except Exception as e:
                         logger.error("[%s] Failed to send watch expiry notification: %s", symbol, e)
 
-            # --- Scan deadline check (08:30 MEZ) ---
-            if mez_hour == 8 and 25 <= now_mez.minute < 35:
-                for symbol in ["GBPJPY"]:
+            # --- Scan deadline check (per pair, 30 min after kill zone start) ---
+            for symbol in config.ACTIVE_PAIRS:
+                profile = get_profile(symbol)
+                kz_start = profile.get("kill_zone_start_mez", 8)
+                # Check 30 min after kill zone start
+                deadline_hour = kz_start
+                deadline_min_start = 25
+                deadline_min_end = 35
+
+                if mez_hour == deadline_hour and deadline_min_start <= now_mez.minute < deadline_min_end:
                     alert_key = f"{symbol}_{today_str}"
                     if alert_key in _scan_deadline_alerted_today:
                         continue
                     last_scan = get_last_scan_for_symbol(symbol)
                     if not last_scan or last_scan["scan_date"] != today_str:
                         _scan_deadline_alerted_today.add(alert_key)
-                        logger.warning("[%s] 08:30 MEZ — no scan yet today!", symbol)
+                        logger.warning("[%s] %d:30 MEZ — no scan yet today!", symbol, kz_start)
                         try:
                             from telegram_bot import send_scan_deadline_warning
                             await send_scan_deadline_warning(symbol)

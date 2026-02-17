@@ -123,11 +123,15 @@ The following fundamental analysis was gathered earlier today. Use it as context
         fundamentals_section = f"""### Step 0 — Fundamentals (web search)
 Use web search to check current {base} and {quote} drivers, breaking news, and the economic calendar for the next 24 hours. Search for {search_queries}."""
 
-    return f"""You are a senior institutional FX analyst specializing in {symbol} during the London Kill Zone using ICT (Inner Circle Trader) methodology. You are analyzing live {symbol} charts from MetaTrader 5.
+    session_name = profile.get("session_name", "London & NY Overlap (08:00-17:00 MEZ)")
+    session_context = profile.get("session_context", "").format(symbol=symbol)
+    session_rules = profile.get("session_rules", "").format(symbol=symbol)
+
+    return f"""You are a senior institutional FX analyst specializing in {symbol} during the {session_name} using ICT (Inner Circle Trader) methodology. You are analyzing live {symbol} charts from MetaTrader 5.
 
 ## CONTEXT
 - Pair: {symbol}
-- Session: **London Kill Zone (08:00-11:00 MEZ)** — the highest-probability window for {symbol}
+- Session: **{session_name}** — the highest-probability window for {symbol}
 - Risk per trade: 1%
 - TP strategy: 50% closed at TP1, runner to TP2
 - Charts provided: **D1 (Daily)**, **H4 (4-Hour)**, **H1 (Hourly)**, **M5 (5-Minute)** — top-down
@@ -176,16 +180,7 @@ Use the provided market data to identify key levels:
 - **Weekly High/Low** — key swing liquidity targets
 - Mark which of these levels price is currently near or has recently swept
 
-### Step 3b — London Kill Zone Context
-You are analyzing during the London Kill Zone (08:00-11:00 MEZ), the most active period for {symbol}:
-- **Asian Range Sweep**: London typically opens by sweeping one side of the Asian session range (00:00-08:00 MEZ):
-  - Asian HIGH swept → institutional selling above, bias shifts BEARISH (expect reversal down)
-  - Asian LOW swept → institutional buying below, bias shifts BULLISH (expect reversal up)
-  - Neither swept yet → the sweep is coming, identify which side is more vulnerable
-- **PDH/PDL** are the PRIMARY liquidity targets during this window
-- Most institutional {symbol} moves happen in the first 90 minutes (08:00-09:30 MEZ)
-- After 09:30, moves tend to consolidate — prefer entries before 09:30 if possible
-- Check if the Asian range was tight (<30 pips) or wide (>60 pips) — tight ranges often lead to explosive London moves
+{session_context}
 
 ### Step 4 — Multi-Timeframe Alignment (D1 → H4 → H1 → M5)
 - Market structure per timeframe: BOS, ChoCH locations with exact prices
@@ -345,7 +340,7 @@ Respond with ONLY valid JSON matching this structure:
 - Consider {symbol} spread (~{profile['typical_spread']}) in SL/TP calculations
 - Use RSI as confirmation, not as a standalone signal
 - Flag any setups near high-impact news events
-- IMPORTANT: Actively look for setups. The London Kill Zone (08:00-11:00 MEZ) almost always offers at least one high-probability {symbol} setup, especially around the Asian range sweep. A medium-confidence setup with clear risk management is still valuable — the system will wait for M1 confirmation before entering.
+- {session_rules}
 - Prefer setups where entry is near current price or approaching (entry_status "at_zone" or "approaching") — these are more likely to trigger during the kill zone window.
 - Always respond with valid JSON, nothing else"""
 

@@ -444,11 +444,17 @@ async def _cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         lines.append("\U0001f553 No scans yet")
 
+    # Show active pairs from config
+    try:
+        from config import ACTIVE_PAIRS
+        pairs_str = ", ".join(ACTIVE_PAIRS)
+    except Exception:
+        pairs_str = "GBPJPY"
+
     lines += [
         "",
-        "Session:",
-        "\u2022 Watch window: 08:00-20:00 MEZ",
-        "\u2022 GBPJPY only — smart entry with M1 confirmation",
+        "Active pairs: " + pairs_str,
+        "\u2022 Smart entry with M1 confirmation",
     ]
 
     await update.message.reply_text("\n".join(lines))
@@ -664,10 +670,10 @@ async def _cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/reset - Force-close stale trades in DB\n"
         "/status - Show bot status for all pairs\n"
         "/help - Show this help message\n\n"
-        "The bot analyzes GBPJPY during the London Kill Zone:\n"
-        "\u2022 Analysis: 08:00 MEZ (London open)\n"
-        "\u2022 Watching: 08:00-20:00 MEZ\n"
-        "\u2022 Entry: M1 confirmation when price reaches zone\n\n"
+        "The bot analyzes active pairs during their session windows:\n"
+        "\u2022 Each pair scans at kill zone start\n"
+        "\u2022 EA watches entry zones locally (zero API cost)\n"
+        "\u2022 M1 confirmation when price reaches zone\n\n"
         "High-confidence setups auto-watch (no manual approval).\n"
         "Lower confidence setups still show Execute/Skip buttons.\n"
         "Risk management: FTMO news filter, daily drawdown limit,\n"

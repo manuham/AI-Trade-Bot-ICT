@@ -17,3 +17,9 @@ MAX_OPEN_TRADES: int = int(os.getenv("MAX_OPEN_TRADES", "2"))
 # API authentication — MT5 EA must send this in X-API-Key header
 # Leave empty to disable authentication (not recommended for production)
 API_KEY: str = os.getenv("API_KEY", "")
+
+# Active trading pairs — comma-separated list
+# Each pair needs: profile in pair_profiles.py + EA attached to chart in MT5
+ACTIVE_PAIRS: list[str] = [
+    p.strip() for p in os.getenv("ACTIVE_PAIRS", "GBPJPY").split(",") if p.strip()
+]
