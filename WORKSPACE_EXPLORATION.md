@@ -36,7 +36,7 @@ MetaTrader 5 EA ──screenshots──> FastAPI Server ──> Claude API
 ## 2. DIRECTORY STRUCTURE
 
 ```
-GBPJPY-AI-Trade-Analyst-Bot/
+AI-Trade-Bot-ICT/
 ├── .git/                              # Git repository
 ├── mt5/                               # MetaTrader 5 Expert Advisors
 │   ├── AI_Analyst.mq5                 # MAIN EA (v6.00, 1,998 lines)
@@ -102,7 +102,7 @@ GBPJPY-AI-Trade-Analyst-Bot/
 | 3b9d375 | Feb 12 | Merge PR #16 | Integration |
 
 **Total commits:** 79  
-**Repository:** https://github.com/manuham/GBPJPY-AI-Trade-Analyst-Bot
+**Repository:** https://github.com/manuham/AI-Trade-Bot-ICT
 
 ---
 
@@ -237,7 +237,7 @@ Deleted/archived branches:
 ## 10. DEPLOYMENT & INFRASTRUCTURE
 
 **VPS:** Hetzner (46.225.66.110)  
-**Port:** 8000 (AI Analyst), 8001 (separate LongEntry Scanner — DO NOT TOUCH)  
+**Port:** 8000 (AI Trade Bot ICT), 8001 (separate LongEntry Scanner — DO NOT TOUCH)  
 **Docker:** docker-compose (hyphenated, v1 syntax)  
 **Volumes:**
 - `./data:/data` — SQLite persistence
@@ -360,7 +360,7 @@ Based on recent commits and roadmap:
 ### Deploy server changes
 ```bash
 ssh root@46.225.66.110
-cd GBPJPY-AI-Trade-Analyst-Bot
+cd AI-Trade-Bot-ICT
 git pull origin main
 docker-compose build --no-cache && docker-compose down && docker-compose up -d
 ```
@@ -372,7 +372,7 @@ docker-compose build --no-cache && docker-compose down && docker-compose up -d
 
 ### View logs
 ```bash
-docker-compose logs -f --tail=50 ai-analyst
+docker-compose logs -f --tail=50 ict-tradebot
 ```
 
 ### Database queries

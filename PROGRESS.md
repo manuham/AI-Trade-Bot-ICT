@@ -155,9 +155,9 @@ GSHEETS_CREDENTIALS_FILE=/data/gsheets_credentials.json
 
 ### External setup completed:
 - Public Telegram channel created and bot added as admin
-- Google Cloud project "Ai Analyst" created with Sheets API enabled
+- Google Cloud project "AI Trade Bot ICT" created with Sheets API enabled
 - Service account created, JSON key uploaded to VPS at `/data/gsheets_credentials.json`
-- Google Sheet "AI Trade Analyst - Public P&L" created and shared with service account
+- Google Sheet "AI Trade Bot ICT - Public P&L" created and shared with service account
 - Myfxbook account created (MT5 connection still pending)
 
 ### Live URLs:

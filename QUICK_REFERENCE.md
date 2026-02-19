@@ -328,7 +328,7 @@ curl http://46.225.66.110:8000/stats -H "X-API-Key: YOUR_API_KEY"
 
 - **GitHub:** https://github.com/manuham/AI-Trade-Bot-ICT
 - **VPS:** Hetzner (46.225.66.110)
-- **Port:** 8000 (AI Analyst), 8001 (separate scanner — don't touch)
+- **Port:** 8000 (AI Trade Bot ICT), 8001 (separate scanner — don't touch)
 - **Main branch:** production-ready, clean with 10 files pending commit
 
 ---

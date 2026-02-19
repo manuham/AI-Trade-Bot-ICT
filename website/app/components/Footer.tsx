@@ -49,7 +49,7 @@ export default function Footer() {
             Pricing
           </a>
           <a
-            href="https://t.me/ai_trade_analyst"
+            href="https://t.me/ict_trade_ai_bot"
             target="_blank"
             rel="noopener noreferrer"
             style={{
