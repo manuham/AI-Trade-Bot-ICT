@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -63,7 +63,11 @@ async def check_risk_filters(symbol: str, setup: TradeSetup) -> tuple[bool, str]
     # --- FTMO News Filter ---
     news_check = await check_news_restriction(symbol)
     if news_check.blocked:
-        return False, f"News: {news_check.event_title}"
+        block_msg = f"News: {news_check.event_title}"
+        if news_check.block_ends_at:
+            block_ends_mez = news_check.block_ends_at + timedelta(hours=1)
+            block_msg += f" (clears ~{block_ends_mez.strftime('%H:%M')} MEZ)"
+        return False, block_msg
 
     # --- Daily Drawdown Check ---
     try:
@@ -245,9 +249,14 @@ async def send_analysis(result: AnalysisResult, auto_queued_indices: set[int] | 
             keyboard = None  # No Execute/Skip buttons
         else:
             if news_check.blocked:
+                ends_str = ""
+                if news_check.block_ends_at:
+                    ends_mez = news_check.block_ends_at + timedelta(hours=1)
+                    ends_str = f"\n\u23f0 Restriction ends: ~{ends_mez.strftime('%H:%M')} MEZ"
                 msg += (
                     f"\n\n\U0001f6ab FTMO NEWS BLOCK ACTIVE\n"
-                    f"\U0001f4f0 {news_check.event_currency}: {news_check.event_title}\n"
+                    f"\U0001f4f0 {news_check.event_currency}: {news_check.event_title}"
+                    f"{ends_str}\n"
                     f"Execute button will be blocked until restriction passes."
                 )
             elif news_check.warning:
@@ -311,11 +320,24 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # --- Run all risk filters ---
             passed, block_reason = await check_risk_filters(symbol, setup)
             if not passed:
+                # Check if this is a news block — offer auto-retry
+                is_news_block = block_reason.startswith("News:")
+                retry_keyboard = None
+                if is_news_block:
+                    retry_keyboard = InlineKeyboardMarkup(
+                        [[InlineKeyboardButton(
+                            "\U0001f504 Auto-Retry After News",
+                            callback_data=f"newsretry_{symbol}_{idx}",
+                        )]]
+                    )
+
                 await query.message.reply_text(
                     f"\U0001f6ab {symbol} TRADE BLOCKED\n"
                     + "\u2501" * 20 + "\n"
                     + f"\u26a0\ufe0f {block_reason}\n\n"
-                    f"Wait for the condition to clear, then try again."
+                    + ("I'll notify you when the restriction clears." if is_news_block
+                       else "Wait for the condition to clear, then try again."),
+                    reply_markup=retry_keyboard,
                 )
                 logger.info("[%s] Trade BLOCKED: %s", symbol, block_reason)
                 return
@@ -394,6 +416,81 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_reply_markup(reply_markup=None)
         await query.message.reply_text(f"\u274c {symbol} setup skipped")
         logger.info("[%s] Setup %s: SKIP selected", symbol, idx)
+
+    elif data.startswith("newsretry_"):
+        # Format: newsretry_GBPJPY_0
+        parts = data.split("_", 2)
+        if len(parts) == 3:
+            symbol = parts[1]
+            idx = int(parts[2])
+        else:
+            await query.message.reply_text("\u26a0\ufe0f Invalid retry command.")
+            return
+
+        await query.edit_message_reply_markup(reply_markup=None)
+
+        # Schedule background task to retry when news clears
+        import asyncio
+
+        async def _news_retry_loop(sym: str, setup_idx: int, msg):
+            """Wait for news restriction to clear, then notify user."""
+            max_wait = 15  # max 15 minutes
+            waited = 0
+            while waited < max_wait:
+                await asyncio.sleep(30)  # check every 30 seconds
+                waited += 0.5
+                news_check = await check_news_restriction(sym)
+                if not news_check.blocked:
+                    # News cleared! Notify user
+                    analysis = _last_analyses.get(sym)
+                    if analysis and 0 <= setup_idx < len(analysis.setups):
+                        retry_keyboard = InlineKeyboardMarkup(
+                            [[
+                                InlineKeyboardButton(
+                                    "\u2705 Execute Now",
+                                    callback_data=f"execute_{sym}_{setup_idx}",
+                                ),
+                                InlineKeyboardButton(
+                                    "\u274c Skip",
+                                    callback_data=f"skip_{sym}_{setup_idx}",
+                                ),
+                            ]]
+                        )
+                        await _app.bot.send_message(
+                            chat_id=TELEGRAM_CHAT_ID,
+                            text=(
+                                f"\u2705 {sym} NEWS RESTRICTION CLEARED!\n"
+                                + "\u2501" * 20 + "\n"
+                                f"The FTMO news window has passed.\n"
+                                f"Setup is still valid — execute now?"
+                            ),
+                            reply_markup=retry_keyboard,
+                        )
+                    else:
+                        await _app.bot.send_message(
+                            chat_id=TELEGRAM_CHAT_ID,
+                            text=(
+                                f"\u2705 {sym} news restriction cleared, "
+                                f"but setup data expired. Run /scan {sym} for fresh analysis."
+                            ),
+                        )
+                    return
+
+            # Timed out waiting
+            await _app.bot.send_message(
+                chat_id=TELEGRAM_CHAT_ID,
+                text=(
+                    f"\u23f0 {sym} news retry timed out after {max_wait} min. "
+                    f"Run /scan {sym} if you still want to trade."
+                ),
+            )
+
+        asyncio.create_task(_news_retry_loop(symbol, idx, query.message))
+        await query.message.reply_text(
+            f"\U0001f504 {symbol} — Watching for news to clear...\n"
+            f"I'll send you Execute/Skip buttons as soon as the restriction lifts."
+        )
+        logger.info("[%s] News auto-retry started for setup %d", symbol, idx)
 
     elif data.startswith("force_"):
         # Format: force_GBPJPY_tradeId
@@ -1141,6 +1238,65 @@ async def send_scan_deadline_warning(symbol: str):
         await _app.bot.send_message(chat_id=chat_id, text=msg)
     except Exception as e:
         logger.error("Failed to send scan deadline warning: %s", e)
+
+
+async def send_daily_news_briefing():
+    """Send daily pre-London open briefing with today's high-impact news and restricted times."""
+    from config import ACTIVE_PAIRS
+
+    try:
+        events = await get_upcoming_news(symbols=ACTIVE_PAIRS, hours_ahead=14)
+
+        now_mez = datetime.now(timezone(timedelta(hours=1)))
+        date_str = now_mez.strftime("%A, %d %B %Y")
+
+        lines = [
+            f"\U0001f4c5 DAILY NEWS BRIEFING",
+            "\u2501" * 22,
+            f"\U0001f4c6 {date_str}",
+            f"\u23f0 London Open: 08:00 MEZ",
+            "",
+        ]
+
+        if events:
+            lines.append(f"\U0001f534 HIGH-IMPACT NEWS TODAY ({len(events)} events):")
+            lines.append("")
+
+            for evt in events:
+                evt_time_mez = evt["time"] + timedelta(hours=1)
+                time_str = evt_time_mez.strftime("%H:%M")
+                # Restricted window
+                block_start = evt_time_mez - timedelta(minutes=2)
+                block_end = evt_time_mez + timedelta(minutes=2)
+                block_str = f"{block_start.strftime('%H:%M')}-{block_end.strftime('%H:%M')}"
+
+                lines.append(
+                    f"  \U0001f4f0 {time_str} MEZ — {evt['currency']} {evt['title']}"
+                )
+                lines.append(
+                    f"     \U0001f6ab No trading: {block_str} MEZ"
+                )
+                if evt.get("forecast") or evt.get("previous"):
+                    forecast = evt.get("forecast", "—")
+                    previous = evt.get("previous", "—")
+                    lines.append(f"     Forecast: {forecast} | Previous: {previous}")
+                lines.append("")
+        else:
+            lines.append("\u2705 No high-impact news today — clear to trade all sessions.")
+            lines.append("")
+
+        # Active pairs summary
+        lines.append(f"\U0001f4ca Active pairs: {', '.join(ACTIVE_PAIRS)}")
+        lines.append(f"\U0001f6e1\ufe0f FTMO buffer: \u00b12 min around each event")
+        lines.append("")
+        lines.append("Good trading! \U0001f4aa")
+
+        msg = "\n".join(lines)
+        await _app.bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
+        logger.info("Daily news briefing sent (%d events)", len(events))
+
+    except Exception as e:
+        logger.error("Failed to send daily news briefing: %s", e)
 
 
 async def send_weekly_report():

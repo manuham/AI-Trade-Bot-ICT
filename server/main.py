@@ -976,11 +976,12 @@ async def telegram_webhook(request: Request):
 # ---------------------------------------------------------------------------
 _scan_deadline_alerted_today: set[str] = set()  # prevent duplicate alerts
 _weekly_report_sent = False
+_daily_briefing_sent = False
 
 
 async def _system_tasks_loop():
-    """Background loop: watch expiry, scan deadline check, weekly report."""
-    global _weekly_report_sent
+    """Background loop: watch expiry, scan deadline check, daily briefing, weekly report."""
+    global _weekly_report_sent, _daily_briefing_sent
 
     while True:
         try:
@@ -1036,6 +1037,19 @@ async def _system_tasks_loop():
             # --- Reset daily alerts at midnight MEZ ---
             if mez_hour == 0 and now_mez.minute < 5:
                 _scan_deadline_alerted_today.clear()
+
+            # --- Daily news briefing (07:30 MEZ, weekdays only) ---
+            is_weekday = now_mez.weekday() < 5  # Mon-Fri
+            if is_weekday and mez_hour == 7 and 25 <= now_mez.minute < 35:
+                if not _daily_briefing_sent:
+                    _daily_briefing_sent = True
+                    try:
+                        from telegram_bot import send_daily_news_briefing
+                        await send_daily_news_briefing()
+                    except Exception as e:
+                        logger.error("Failed to send daily news briefing: %s", e)
+            elif mez_hour != 7 or now_mez.minute >= 35:
+                _daily_briefing_sent = False
 
             # --- Weekly report (Sunday 19:00 MEZ) ---
             if now_mez.weekday() == 6 and mez_hour == 19 and now_mez.minute < 5:

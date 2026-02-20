@@ -48,6 +48,7 @@ class NewsCheckResult:
     event_time: Optional[datetime] = None
     minutes_until: int = 0      # Minutes until the event (negative = already passed)
     message: str = ""           # Human-readable message
+    block_ends_at: Optional[datetime] = None  # When the restriction window ends
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +144,9 @@ async def check_news_restriction(
         buffer = timedelta(minutes=buffer_minutes)
         if abs_delta <= buffer:
             minutes_until = int(delta.total_seconds() / 60)
+            block_ends = event_time + timedelta(minutes=buffer_minutes)
+            block_ends_mez = block_ends + timedelta(hours=1)  # UTC → MEZ
+            ends_in_min = max(1, int((block_ends - now).total_seconds() / 60))
             return NewsCheckResult(
                 blocked=True,
                 warning=True,
@@ -150,11 +154,13 @@ async def check_news_restriction(
                 event_currency=event_currency,
                 event_time=event_time,
                 minutes_until=minutes_until,
+                block_ends_at=block_ends,
                 message=(
                     f"BLOCKED: {event_currency} high-impact news "
                     f"\"{event.get('title', '')}\" "
                     f"{'in ' + str(abs(minutes_until)) + ' min' if minutes_until > 0 else str(abs(minutes_until)) + ' min ago'}. "
-                    f"FTMO restricts trading {buffer_minutes} min before/after."
+                    f"FTMO restricts trading {buffer_minutes} min before/after. "
+                    f"Restriction ends at {block_ends_mez.strftime('%H:%M')} MEZ (~{ends_in_min} min)."
                 ),
             )
 
