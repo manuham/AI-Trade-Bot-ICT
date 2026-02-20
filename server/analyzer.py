@@ -174,24 +174,37 @@ Use web search to check current {base} and {quote} drivers, breaking news, and t
 {session_context}
 
 ### 3. M5 Entry Triggers + Multi-TF Alignment
-- MSS on M5: displacement candle body ≥15 pips breaking swing H/L
-- FVGs: M5 ≥15 pips, H1 ≥25 pips. Calculate CE (50% midpoint) as optimal entry
-- Liquidity sweeps: price exceeds key level ≥5 pips then reverses
-- OB validity: H4 ≤8 candles, H1 ≤30 candles. Untested = strongest, tested 3x+ = weakened
+- MSS on M5: displacement candle body ≥ max(15, ATR_H1 * 0.3) pips breaking swing H/L. Check ATR_H1 from market data JSON — on volatile days (ATR > 100p), require proportionally larger displacement
+- FVGs: M5 ≥ max(15, ATR_H1 * 0.3) pips, H1 ≥ max(25, ATR_H4 * 0.25) pips. Calculate CE (50% midpoint) as optimal entry. Small FVGs on high-ATR days are noise, not signals
+- Liquidity sweeps: price exceeds key level ≥ max(5, ATR_M5 * 0.5) pips then reverses
+- OB strength gradient:
+  - FRESH (1-3 candles): highest strength, full checklist credit
+  - VALID (4-8 candles H4, 4-20 candles H1): standard strength, full credit
+  - AGING (9-15 candles H4, 21-40 candles H1): reduced strength, note in negative_factors ("aging OB")
+  - EXPIRED (>15 candles H4, >40 candles H1): do not use as primary confluence
+  - Untested OBs are always strongest. Tested once = valid. Tested 2x = weakened. Tested 3x+ = expired.
 - Note D1/H4/H1/M5 alignment vs divergences
 - Distinguish: where price BOUNCED FROM vs where price IS NOW
 
-### 4. Setup Generation
-**Criteria**: D1+H4 aligned preferred | Entry at CE of FVG within OB zone | Ideally within OTE (62-79%) | SL: 5-10 pips beyond OB extreme, **hard cap 70 pips** | Min R:R 1:1.2 (TP1), 1:2 (TP2) | ≥2 confluence factors | Clear invalidation
+**Multi-TF Divergence Check**: Before proposing any setup, verify:
+- If H1 structure opposes M5 signal (e.g., M5 bullish MSS but H1 making lower highs) → flag as "potential trap", add to negative_factors, lower confidence by 1 tier
+- If D1 opposes the setup direction → must have BOS/ChoCH on H4 as reversal evidence, otherwise reject
+- If M5 and H1 align but H4 diverges → setup is valid but add "H4 divergence" to negative_factors
 
-**Counter-trend**: Allowed only with BOS/ChoCH reversal on H1/M5. Mark counter_trend: true, max confidence "medium".
+### 4. Setup Generation
+**Criteria**: D1+H4 aligned preferred | Entry at CE of FVG within OB zone | Ideally within OTE (62-79%) | SL: 5-10 pips beyond OB extreme, **hard cap = min(70, ATR_D1 * 0.5) pips** (for XAUUSD: min(150, ATR_D1 * 0.4) pips — check ATR_D1 from market data JSON) | Min R:R 1:1.2 (TP1), 1:2 (TP2) | ≥2 confluence factors | Clear invalidation
+
+**Counter-trend rules**:
+- DEFAULT: Allowed only with BOS/ChoCH reversal on H1/M5. Mark counter_trend: true, max confidence "medium"
+- EXCEPTION: Allow "medium_high" confidence counter-trend IF all 3 conditions met: (1) H4 Order Block triggered, (2) M5 FVG formed with strong displacement, (3) H1 showing ChoCH (not just BOS)
+- ALWAYS add "counter-trend" to negative_factors regardless of confidence level
 
 **For each setup, also provide:**
-- **trend_alignment**: "X/4 direction" (how many of D1/H4/H1/M5 agree, e.g. "3/4 bearish (M5 diverging)")
+- **trend_alignment**: "X/4 direction" (how many of D1/H4/H1/M5 agree). Weight importance: D1 (strongest) > H4 > H1 > M5. "3/4 with D1+H4+H1 aligned" is much stronger than "3/4 with H4+H1+M5 aligned". If D1 opposes the setup, this is a significant negative factor. Note which specific timeframes diverge (e.g., "3/4 bullish — D1 diverges bearish" vs "3/4 bullish — M5 diverges bearish")
 - **entry_distance_pips** + **entry_status**: "at_zone" (<10p), "approaching" (10-40p), "requires_pullback" (>40p)
 - **negative_factors**: 1-3 honest risks (e.g. "D1 opposes", "RSI overbought", "OB stale", "SL near cap")
 - **checklist_score**: Score against 12-point ICT checklist:
-  1. D1 bias identified | 2. H4 aligns with D1 | 3. Correct Premium/Discount zone | 4. Active OB (within validity) | 5. MSS on M5 (≥15p displacement) | 6. FVG meets min size | 7. Entry at CE level | 8. Within OTE zone | 9. Liquidity sweep detected | 10. SL ≤70 pips | 11. R:R ≥1:2 on TP2 | 12. No news conflict within 30 min
+  1. D1 bias identified | 2. H4 aligns with D1 | 3. Correct Premium/Discount zone | 4. Active OB (within validity, check strength gradient) | 5. MSS on M5 (≥ATR-scaled displacement) | 6. FVG meets ATR-scaled min size | 7. Entry at CE level | 8. Within OTE zone | 9. Liquidity sweep detected | 10. SL within ATR-scaled cap | 11. R:R ≥1:2 on TP2 | 12. No news conflict (tiered: FOMC/NFP/CPI/central bank = ±60 min, other high-impact = ±30 min, medium = ±15 min). If news approaching but outside buffer, note as negative factor
   Scoring: HIGH=10-12, MEDIUM-HIGH=8-9, MEDIUM=6-7, LOW=4-5. Below 4 = don't propose.
 
 IMPORTANT: Quality over quantity. Only propose setups with genuine ICT confluence. An empty setups array on a flat day is better than forcing a weak setup. But the {session_name} usually offers at least one opportunity — don't give up too easily.
@@ -234,24 +247,30 @@ def _build_screening_prompt(symbol: str, profile: dict, fundamentals: Optional[s
     if fundamentals:
         fund_section = f"\n\nFundamental context (gathered earlier today):\n{fundamentals}"
 
-    return f"""You are a quick-scan FX analyst. Look at these {symbol} charts (H1, M5) and the market data to determine if there is ANY potential ICT trade setup worth analyzing further.{fund_section}
+    return f"""You are a quick-scan FX analyst. Analyze these {symbol} charts (H1, M5) and market data JSON to determine if there is a setup worth full analysis.{fund_section}
 
-The market data JSON includes D1/H4 RSI + ATR + previous day levels, so you can assess D1 and H4 bias without those charts.
+The market data JSON includes D1/H4 RSI, ATR, and previous day/week levels.
 
-IMPORTANT: Your job is to PASS setups through for detailed analysis, not to filter them out.
-Lean toward "has_setup: true" if you see ANY of these:
-- Price near a key level (OB, FVG, PDH/PDL, Asian range)
-- Clear H1 trend with pullback opportunity
-- Recent BOS or ChoCH on H1 or M5
-- Price reacting to a swing level
+PASS the setup (has_setup: true) if you see AT LEAST 2 of these:
+- Price at or approaching a key level (OB, FVG, PDH/PDL, Asian range, weekly H/L)
+- Clear H1 structure (BOS or ChoCH visible)
+- M5 showing displacement (strong-body candle breaking structure)
+- Liquidity sweep visible (wick beyond key level then reversal)
+- Price in Premium/Discount zone aligned with D1 bias
 
-Only say "has_setup: false" if the market is genuinely dead (no structure, tight range, no levels nearby).
+REJECT (has_setup: false) if:
+- Market is ranging with no structure (small bodies, no clear swing points)
+- Price is mid-range with no nearby key levels
+- Only 1 or fewer confluence factors visible
+- Spread is abnormally wide (off-session)
+
+Use ATR from market data to assess if recent moves are significant: a 15-pip candle means nothing if D1 ATR is 200 pips, but it's a strong signal if ATR is 40 pips.
 
 Respond with ONLY this JSON:
 {{
   "has_setup": true or false,
   "h1_trend": "bullish" or "bearish" or "ranging",
-  "reasoning": "1-2 sentences explaining why trade or no trade",
+  "reasoning": "2-3 sentences: what confluence you see or why you're rejecting",
   "market_summary": "1-2 sentence market overview"
 }}"""
 
@@ -266,7 +285,7 @@ def _build_performance_feedback(symbol: str) -> Optional[str]:
     what works and what doesn't.
     """
     try:
-        trades = get_recent_closed_for_pair(symbol, limit=20)
+        trades = get_recent_closed_for_pair(symbol, limit=50)
     except Exception as e:
         logger.warning("Failed to get performance history for %s: %s", symbol, e)
         return None
@@ -311,7 +330,7 @@ def _build_performance_feedback(symbol: str) -> Optional[str]:
     lines.append(f"\nOverall: {wr:.0f}% win rate ({wins}W / {losses}L) | Net: {total_pnl:+.0f} pips")
 
     # --- Section 2: Pattern analysis (only if enough data) ---
-    if total >= 3:
+    if total >= 5:
         lines.append("\n## Pattern Analysis")
 
         def _wr_line(label, trade_list):
@@ -361,7 +380,7 @@ def _build_performance_feedback(symbol: str) -> Optional[str]:
     # --- Section 3: Post-trade review insights ---
     try:
         from trade_tracker import get_recent_reviews
-        reviews = get_recent_reviews(symbol, limit=5)
+        reviews = get_recent_reviews(symbol, limit=8)
         if reviews:
             lines.append("\n## Recent Post-Trade Insights")
             for r in reviews:
@@ -897,27 +916,28 @@ async def confirm_entry(
     except Exception:
         pass
 
-    system_prompt = f"""You are a fast M1 price-action reader for {symbol}. Your ONLY job is to check if there is a {direction} reaction forming on the M1 chart right now.
+    system_prompt = f"""You are a fast M1 price-action reader for {symbol}. Check if there is a {direction} reaction forming on the M1 chart at the entry zone.
 
-CRITICAL: Focus ONLY on the LAST 5 candles (the rightmost candles on the chart). Ignore everything else — the higher timeframe analysis has already been done and confirmed this is a valid setup. You are just checking for a basic reaction at the zone.
+ZONE BOUNDARIES: Entry zone is {entry_min:.{digits}f} to {entry_max:.{digits}f}. If current price ({current_price:.{digits}f}) is more than 5 pips outside this zone, say NO — price has moved past the intended entry area.
 
-The setup has ALREADY been validated on D1, H4, H1, and M5 with a high ICT checklist score. Your job is simply to confirm price is not slicing straight through the zone. Even a SMALL reaction is enough.
+CRITICAL: Focus ONLY on the LAST 5-8 CANDLES. The setup has been validated on D1/H4/H1/M5 with these confluence factors: {', '.join(confluence[:3]) if confluence else 'multiple ICT factors'}{confluence_text}
 
-Say YES (confirmed: true) if you see ANY of these in the last 5 candles:
-- Any wick rejection off {'support' if bias == 'long' else 'resistance'} (even a small one)
+Say YES (confirmed: true) if you see ANY of these in the last 5-8 candles:
+- Wick rejection off {'support' if bias == 'long' else 'resistance'} (proportional to recent candle sizes — don't expect 10-pip wicks if candles are 3-pip bodies)
 - A {'bullish' if bias == 'long' else 'bearish'} candle after {'bearish' if bias == 'long' else 'bullish'} ones (reversal attempt)
-- Price slowing down or stalling at the zone (small-body candles, dojis)
-- Any {'bullish' if bias == 'long' else 'bearish'} engulfing or FVG
-- Price simply sitting in or near the entry zone without aggressive {opposite} momentum
+- Price slowing/stalling at the zone (small bodies, dojis, spinning tops)
+- {'Bullish' if bias == 'long' else 'Bearish'} engulfing or FVG forming
+- Price sitting in the zone without aggressive {opposite} momentum
 
 Say NO (confirmed: false) ONLY if:
-- Price is clearly slicing through the zone with strong {opposite} momentum (large-body {opposite} candles with no wicks)
-- The last 5 candles show zero hesitation — pure one-directional {opposite} movement through the zone
-
-When in doubt, say YES. The higher timeframe analysis supports this trade.
+- Price is clearly slicing through the zone (large {opposite} bodies with no wicks)
+- Last 5+ candles show pure one-directional {opposite} movement with increasing momentum
+- Price has already moved more than 5 pips beyond the entry zone
+{sentiment_text}
+When in doubt, say YES. The higher-timeframe analysis supports this trade.
 
 Respond with ONLY this JSON:
-{{"confirmed": true or false, "reasoning": "1 sentence about the last 5 candles"}}"""
+{{"confirmed": true or false, "reasoning": "1-2 sentences about last 5-8 candles and zone reaction"}}"""
 
     m1_compressed, m1_media = _compress_image(screenshot_m1)
     user_content = [
@@ -1004,17 +1024,27 @@ async def post_trade_review(trade: dict, symbol: str) -> str:
     neg_factors = trade.get("negative_factors", "")
     price_zone = trade.get("price_zone", "")
 
-    prompt = f"""You are reviewing a closed {symbol} trade for pattern learning. Be concise (2-3 sentences max).
+    pnl_money = trade.get("pnl_money", 0)
+    d1_trend = trade.get("d1_trend", "")
+    counter_trend = "yes" if trade.get("counter_trend") else "no"
+    m1_confirmations = trade.get("m1_confirmations_used", 0)
+
+    prompt = f"""You are reviewing a closed {symbol} trade for pattern learning. Be concise and specific (2-3 sentences).
 
 Trade details:
-- Bias: {bias} | Outcome: {outcome} | P&L: {pnl_pips:+.1f} pips
+- Bias: {bias} | Outcome: {outcome} | P&L: {pnl_pips:+.1f} pips ({pnl_money:+.2f} USD)
 - Confidence: {confidence} | Checklist: {checklist}
-- Trend alignment: {trend_align} | Price zone: {price_zone}
-- Entry status at signal: {entry_status}
+- Trend alignment: {trend_align} | D1 trend: {d1_trend} | Price zone: {price_zone}
+- Entry status at signal: {entry_status} | Counter-trend: {counter_trend}
 - Negative factors flagged: {neg_factors}
 - SL: {sl_pips:.0f} pips | TP1: {tp1_pips:.0f} pips | TP2: {tp2_pips:.0f} pips
+- M1 confirmations used: {m1_confirmations}
 
-What's the key takeaway? Focus on what the system should learn for future {symbol} trades (e.g., "counter-trend setups with <8/12 checklist tend to lose", "at_zone entries outperform requires_pullback"). Be specific and actionable."""
+What is the ONE key takeaway? Focus on actionable patterns:
+- If loss: what was the weakest link? (e.g., "D1 opposition was the strongest negative factor — 3/4 alignment with D1 diverging tends to lose")
+- If win: what made this work? (e.g., "fresh OB + strong MSS displacement at OTE zone = reliable pattern")
+- Compare entry_status to outcome: do 'at_zone' entries outperform 'requires_pullback'?
+- Note if M1 needed many attempts (>3) — this may indicate weak zone reaction"""
 
     try:
         response = await client.messages.create(
