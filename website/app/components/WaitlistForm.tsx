@@ -35,65 +35,49 @@ export default function WaitlistForm() {
   }
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      style={{
-        display: "flex",
-        gap: 10,
-        maxWidth: 420,
-        margin: "0 auto",
-        flexWrap: "wrap",
-        justifyContent: "center",
-      }}
-    >
-      <input
-        type="email"
-        placeholder="your@email.com"
-        value={email}
-        onChange={(e) => {
-          setEmail(e.target.value);
-          if (status !== "idle") setStatus("idle");
-        }}
-        required
-        style={{
-          flex: "1 1 240px",
-          padding: "12px 16px",
-          borderRadius: 8,
-          border: "1px solid var(--border)",
-          background: "var(--bg-primary)",
-          color: "var(--text-primary)",
-          fontSize: 15,
-          outline: "none",
-        }}
-      />
-      <button
-        type="submit"
-        disabled={status === "loading"}
-        style={{
-          padding: "12px 24px",
-          borderRadius: 8,
-          border: "none",
-          background: "var(--accent)",
-          color: "#fff",
-          fontWeight: 600,
-          fontSize: 15,
-          cursor: status === "loading" ? "wait" : "pointer",
-          opacity: status === "loading" ? 0.7 : 1,
-        }}
+    <div id="waitlist" className="scroll-mt-24">
+      <form
+        onSubmit={handleSubmit}
+        className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto"
       >
-        {status === "loading" ? "Joining..." : "Join Waitlist"}
-      </button>
+        <input
+          type="email"
+          placeholder="your@email.com"
+          value={email}
+          onChange={(e) => {
+            setEmail(e.target.value);
+            if (status !== "idle") setStatus("idle");
+          }}
+          required
+          className="flex-1 px-4 py-3 rounded-xl border border-border bg-bg-primary text-text-primary text-sm outline-none focus:border-accent transition-colors duration-200 placeholder:text-text-muted"
+        />
+        <button
+          type="submit"
+          disabled={status === "loading"}
+          className="px-6 py-3 rounded-xl border-none bg-accent hover:bg-accent-hover text-white font-semibold text-sm cursor-pointer transition-all duration-200 disabled:opacity-60 disabled:cursor-wait glow-accent whitespace-nowrap"
+        >
+          {status === "loading" ? (
+            <span className="inline-flex items-center gap-2">
+              <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              Joining...
+            </span>
+          ) : (
+            "Join Waitlist"
+          )}
+        </button>
+      </form>
 
+      {/* Status messages */}
       {status === "success" && (
-        <p style={{ width: "100%", textAlign: "center", color: "var(--green)", fontSize: 14, marginTop: 4 }}>
+        <p className="text-center text-green text-sm mt-3 animate-fade-in-up">
           {message}
         </p>
       )}
       {status === "error" && (
-        <p style={{ width: "100%", textAlign: "center", color: "var(--red)", fontSize: 14, marginTop: 4 }}>
+        <p className="text-center text-red text-sm mt-3 animate-fade-in-up">
           {message}
         </p>
       )}
-    </form>
+    </div>
   );
 }

@@ -1,4 +1,5 @@
 import WaitlistForm from "./WaitlistForm";
+import AnimatedSection from "./AnimatedSection";
 
 const tiers = [
   {
@@ -13,6 +14,7 @@ const tiers = [
     ],
     highlight: false,
     cta: "Current Plan",
+    ctaLink: "#stats",
   },
   {
     name: "Starter",
@@ -27,6 +29,7 @@ const tiers = [
     ],
     highlight: false,
     cta: "Join Waitlist",
+    ctaLink: "#waitlist",
   },
   {
     name: "Pro",
@@ -42,6 +45,7 @@ const tiers = [
     ],
     highlight: true,
     cta: "Join Waitlist",
+    ctaLink: "#waitlist",
   },
   {
     name: "Enterprise",
@@ -57,174 +61,104 @@ const tiers = [
     ],
     highlight: false,
     cta: "Join Waitlist",
+    ctaLink: "#waitlist",
   },
 ];
 
 export default function Pricing() {
   return (
-    <section
-      id="pricing"
-      style={{
-        padding: "80px 1rem",
-        background: "var(--bg-secondary)",
-      }}
-    >
-      <div style={{ maxWidth: 1060, margin: "0 auto" }}>
-        <p
-          style={{
-            textAlign: "center",
-            fontSize: 13,
-            color: "var(--accent)",
-            fontWeight: 600,
-            letterSpacing: 1.5,
-            textTransform: "uppercase",
-            marginBottom: 8,
-          }}
-        >
-          Pricing
-        </p>
-        <h2
-          style={{
-            textAlign: "center",
-            fontSize: "1.8rem",
-            fontWeight: 700,
-            marginBottom: 8,
-          }}
-        >
-          Simple, Transparent Plans
-        </h2>
-        <p
-          style={{
-            textAlign: "center",
-            color: "var(--text-secondary)",
-            marginBottom: 40,
-            fontSize: 15,
-          }}
-        >
-          Launching soon — join the waitlist to lock in early-bird pricing.
-        </p>
+    <section id="pricing" className="py-20 px-4 bg-bg-secondary">
+      <div className="max-w-6xl mx-auto">
+        {/* Section header */}
+        <AnimatedSection className="text-center mb-14">
+          <p className="text-accent text-xs font-semibold uppercase tracking-widest mb-3">
+            Pricing
+          </p>
+          <h2 className="text-2xl sm:text-3xl font-bold mb-3">
+            Simple, Transparent Plans
+          </h2>
+          <p className="text-text-secondary text-sm sm:text-base">
+            Launching soon — join the waitlist to lock in early-bird pricing.
+          </p>
+        </AnimatedSection>
 
         {/* Tier cards */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
-            gap: 18,
-            marginBottom: 48,
-          }}
-        >
-          {tiers.map((tier) => (
-            <div
-              key={tier.name}
-              style={{
-                background: "var(--bg-card)",
-                border: tier.highlight
-                  ? "2px solid var(--accent)"
-                  : "1px solid var(--border)",
-                borderRadius: 14,
-                padding: "32px 24px",
-                display: "flex",
-                flexDirection: "column",
-                position: "relative",
-              }}
-            >
-              {tier.highlight && (
-                <div
-                  style={{
-                    position: "absolute",
-                    top: -12,
-                    left: "50%",
-                    transform: "translateX(-50%)",
-                    background: "var(--accent)",
-                    color: "#fff",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    padding: "4px 14px",
-                    borderRadius: 999,
-                    letterSpacing: 1,
-                    textTransform: "uppercase",
-                  }}
-                >
-                  Most Popular
-                </div>
-              )}
-
-              <h3 style={{ fontSize: "1.1rem", fontWeight: 600, marginBottom: 4 }}>
-                {tier.name}
-              </h3>
-              <div style={{ marginBottom: 12 }}>
-                <span style={{ fontSize: "2rem", fontWeight: 700 }}>
-                  {tier.price}
-                </span>
-                <span
-                  style={{
-                    fontSize: 14,
-                    color: "var(--text-secondary)",
-                  }}
-                >
-                  {tier.period}
-                </span>
-              </div>
-              <p
-                style={{
-                  fontSize: 14,
-                  color: "var(--text-secondary)",
-                  marginBottom: 20,
-                  lineHeight: 1.5,
-                }}
-              >
-                {tier.description}
-              </p>
-
-              <ul style={{ listStyle: "none", padding: 0, margin: 0, flex: 1 }}>
-                {tier.features.map((f) => (
-                  <li
-                    key={f}
-                    style={{
-                      fontSize: 14,
-                      color: "var(--text-secondary)",
-                      padding: "5px 0",
-                      display: "flex",
-                      alignItems: "flex-start",
-                      gap: 8,
-                    }}
-                  >
-                    <span style={{ color: "var(--green)", flexShrink: 0 }}>✓</span>
-                    {f}
-                  </li>
-                ))}
-              </ul>
-
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-16">
+          {tiers.map((tier, i) => (
+            <AnimatedSection key={tier.name} delay={i * 0.1}>
               <div
-                style={{
-                  marginTop: 24,
-                  padding: "10px 0",
-                  textAlign: "center",
-                  borderRadius: 8,
-                  fontWeight: 600,
-                  fontSize: 14,
-                  background: tier.highlight
-                    ? "var(--accent)"
-                    : "transparent",
-                  border: tier.highlight
-                    ? "none"
-                    : "1px solid var(--border)",
-                  color: tier.highlight ? "#fff" : "var(--text-secondary)",
-                  cursor: tier.cta === "Current Plan" ? "default" : "pointer",
-                }}
+                className={`relative bg-bg-card rounded-xl p-7 flex flex-col h-full card-hover ${
+                  tier.highlight
+                    ? "border-2 border-accent glow-accent"
+                    : "border border-border"
+                }`}
               >
-                {tier.cta}
+                {/* Popular badge */}
+                {tier.highlight && (
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-accent text-white text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+                    Most Popular
+                  </div>
+                )}
+
+                {/* Tier name */}
+                <h3 className="text-base font-semibold mb-1 text-text-primary">
+                  {tier.name}
+                </h3>
+
+                {/* Price */}
+                <div className="mb-4">
+                  <span className="text-3xl font-bold text-text-primary">
+                    {tier.price}
+                  </span>
+                  <span className="text-text-muted text-sm ml-1">
+                    {tier.period}
+                  </span>
+                </div>
+
+                {/* Description */}
+                <p className="text-text-secondary text-sm leading-relaxed mb-5">
+                  {tier.description}
+                </p>
+
+                {/* Features */}
+                <ul className="flex-1 space-y-2.5 mb-6">
+                  {tier.features.map((f) => (
+                    <li key={f} className="flex items-start gap-2.5 text-sm text-text-secondary">
+                      <svg className="w-4 h-4 text-green mt-0.5 shrink-0" viewBox="0 0 16 16" fill="none">
+                        <path d="M3 8l3.5 3.5L13 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+
+                {/* CTA button */}
+                <a
+                  href={tier.ctaLink}
+                  className={`block text-center py-2.5 rounded-lg font-semibold text-sm no-underline transition-all duration-200 ${
+                    tier.highlight
+                      ? "bg-accent hover:bg-accent-hover text-white"
+                      : tier.cta === "Current Plan"
+                        ? "border border-border text-text-muted cursor-default"
+                        : "border border-border text-text-secondary hover:border-accent hover:text-accent-light"
+                  }`}
+                >
+                  {tier.cta}
+                </a>
               </div>
-            </div>
+            </AnimatedSection>
           ))}
         </div>
 
-        {/* Waitlist form */}
-        <div style={{ textAlign: "center", marginBottom: 12 }}>
-          <h3 style={{ fontSize: "1.2rem", fontWeight: 600, marginBottom: 16 }}>
+        {/* Waitlist section */}
+        <AnimatedSection className="text-center mb-6">
+          <h3 className="text-xl font-semibold mb-2 text-text-primary">
             Get Notified When We Launch
           </h3>
-        </div>
+          <p className="text-text-secondary text-sm mb-6">
+            Be the first to know — no spam, just launch updates.
+          </p>
+        </AnimatedSection>
         <WaitlistForm />
       </div>
     </section>

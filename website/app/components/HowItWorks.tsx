@@ -1,103 +1,89 @@
+import AnimatedSection from "./AnimatedSection";
+
 const steps = [
   {
-    icon: "🧠",
+    number: "01",
     title: "AI Multi-Timeframe Analysis",
     description:
-      "Every morning at 08:00 CET, Claude AI scans D1, H4, H1 and M5 charts — screening for ICT setups with institutional-grade precision.",
+      "Every session, Claude AI scans D1, H4, H1 and M5 charts — screening for ICT setups with institutional-grade precision across multiple pairs.",
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        <path d="M9 12l2 2 4-4" />
+      </svg>
+    ),
   },
   {
-    icon: "📋",
+    number: "02",
     title: "12-Point ICT Checklist",
     description:
-      "Each setup is scored against 12 ICT criteria: bias alignment, order blocks, FVGs, MSS, OTE zones, liquidity sweeps, R:R and more.",
+      "Each setup is scored against 12 ICT criteria: bias alignment, order blocks, FVGs, market structure shifts, OTE zones, liquidity sweeps, and R:R targets.",
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" />
+        <rect x="9" y="3" width="6" height="4" rx="2" />
+        <path d="M9 14l2 2 4-4" />
+      </svg>
+    ),
   },
   {
-    icon: "🎯",
+    number: "03",
     title: "Smart Zone Entry",
     description:
-      "High-scoring setups are automatically watched. When price reaches the entry zone, a separate AI confirms on the M1 chart before executing.",
+      "High-scoring setups are automatically watched. When price reaches the entry zone, a separate AI confirms on the M1 chart before executing the trade.",
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10" />
+        <circle cx="12" cy="12" r="6" />
+        <circle cx="12" cy="12" r="2" />
+      </svg>
+    ),
   },
 ];
 
-const stepCardStyle: React.CSSProperties = {
-  background: "var(--bg-card)",
-  border: "1px solid var(--border)",
-  borderRadius: 12,
-  padding: "32px 24px",
-  flex: "1 1 260px",
-  textAlign: "center",
-};
-
 export default function HowItWorks() {
   return (
-    <section
-      id="how-it-works"
-      style={{
-        padding: "80px 1rem",
-        background: "var(--bg-secondary)",
-      }}
-    >
-      <div style={{ maxWidth: 960, margin: "0 auto" }}>
-        <p
-          style={{
-            textAlign: "center",
-            fontSize: 13,
-            color: "var(--accent)",
-            fontWeight: 600,
-            letterSpacing: 1.5,
-            textTransform: "uppercase",
-            marginBottom: 8,
-          }}
-        >
-          How It Works
-        </p>
-        <h2
-          style={{
-            textAlign: "center",
-            fontSize: "1.8rem",
-            fontWeight: 700,
-            marginBottom: 40,
-          }}
-        >
-          Three Layers of Intelligence
-        </h2>
+    <section id="how-it-works" className="py-20 px-4 bg-bg-secondary">
+      <div className="max-w-5xl mx-auto">
+        {/* Section header */}
+        <AnimatedSection className="text-center mb-14">
+          <p className="text-accent text-xs font-semibold uppercase tracking-widest mb-3">
+            How It Works
+          </p>
+          <h2 className="text-2xl sm:text-3xl font-bold mb-3">
+            Three Layers of Intelligence
+          </h2>
+          <p className="text-text-secondary text-sm sm:text-base max-w-lg mx-auto">
+            From multi-timeframe analysis to precision entry — every step is automated and transparent.
+          </p>
+        </AnimatedSection>
 
-        <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+        {/* Step cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {steps.map((step, i) => (
-            <div key={i} style={stepCardStyle}>
-              <div style={{ fontSize: "2.5rem", marginBottom: 16 }}>
-                {step.icon}
+            <AnimatedSection key={i} delay={i * 0.15}>
+              <div className="bg-bg-card border border-border rounded-xl p-8 card-hover h-full">
+                {/* Icon */}
+                <div className="w-12 h-12 rounded-lg bg-accent-glow flex items-center justify-center text-accent-light mb-5">
+                  {step.icon}
+                </div>
+
+                {/* Step number */}
+                <div className="text-accent text-xs font-bold tracking-widest mb-2">
+                  STEP {step.number}
+                </div>
+
+                {/* Title */}
+                <h3 className="text-lg font-semibold mb-3 text-text-primary">
+                  {step.title}
+                </h3>
+
+                {/* Description */}
+                <p className="text-text-secondary text-sm leading-relaxed">
+                  {step.description}
+                </p>
               </div>
-              <div
-                style={{
-                  fontSize: 12,
-                  color: "var(--accent)",
-                  fontWeight: 700,
-                  letterSpacing: 1,
-                  marginBottom: 8,
-                }}
-              >
-                STEP {i + 1}
-              </div>
-              <h3
-                style={{
-                  fontSize: "1.1rem",
-                  fontWeight: 600,
-                  marginBottom: 12,
-                }}
-              >
-                {step.title}
-              </h3>
-              <p
-                style={{
-                  color: "var(--text-secondary)",
-                  fontSize: 15,
-                  lineHeight: 1.6,
-                }}
-              >
-                {step.description}
-              </p>
-            </div>
+            </AnimatedSection>
           ))}
         </div>
       </div>

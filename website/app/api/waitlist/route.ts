@@ -1,28 +1,64 @@
 import { NextRequest, NextResponse } from "next/server";
-import { promises as fs } from "fs";
-import path from "path";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const WAITLIST_FILE = path.join(DATA_DIR, "waitlist.json");
+// In-memory store as fallback for Vercel serverless (no filesystem persistence)
+// For production, replace with a real database (Supabase, PlanetScale, etc.)
+// or use an email service API (Mailchimp, Resend, ConvertKit)
+let memoryWaitlist: { email: string; joined_at: string }[] = [];
 
-interface WaitlistEntry {
-  email: string;
-  joined_at: string;
-  ip?: string;
-}
-
-async function getWaitlist(): Promise<WaitlistEntry[]> {
+// Try filesystem storage (works locally and on VPS, NOT on Vercel)
+async function getWaitlistFromFile(): Promise<{ email: string; joined_at: string }[]> {
   try {
-    const raw = await fs.readFile(WAITLIST_FILE, "utf-8");
+    const { promises: fs } = await import("fs");
+    const path = await import("path");
+    const filePath = path.join(process.cwd(), "data", "waitlist.json");
+    const raw = await fs.readFile(filePath, "utf-8");
     return JSON.parse(raw);
   } catch {
     return [];
   }
 }
 
-async function saveWaitlist(entries: WaitlistEntry[]) {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(WAITLIST_FILE, JSON.stringify(entries, null, 2));
+async function saveWaitlistToFile(entries: { email: string; joined_at: string }[]): Promise<boolean> {
+  try {
+    const { promises: fs } = await import("fs");
+    const path = await import("path");
+    const dataDir = path.join(process.cwd(), "data");
+    await fs.mkdir(dataDir, { recursive: true });
+    await fs.writeFile(
+      path.join(dataDir, "waitlist.json"),
+      JSON.stringify(entries, null, 2)
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function getWaitlist(): Promise<{ email: string; joined_at: string }[]> {
+  // Try file first, fall back to memory
+  const fileList = await getWaitlistFromFile();
+  if (fileList.length > 0) return fileList;
+  return memoryWaitlist;
+}
+
+async function addToWaitlist(email: string): Promise<{ success: boolean; position: number; alreadyExists: boolean }> {
+  const waitlist = await getWaitlist();
+
+  // Check duplicate
+  if (waitlist.some((e) => e.email === email)) {
+    return { success: true, position: 0, alreadyExists: true };
+  }
+
+  const entry = { email, joined_at: new Date().toISOString() };
+  waitlist.push(entry);
+
+  // Try to save to file, fall back to memory
+  const fileSaved = await saveWaitlistToFile(waitlist);
+  if (!fileSaved) {
+    memoryWaitlist = waitlist;
+  }
+
+  return { success: true, position: waitlist.length, alreadyExists: false };
 }
 
 export async function POST(req: NextRequest) {
@@ -38,29 +74,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const waitlist = await getWaitlist();
+    const result = await addToWaitlist(email);
 
-    // Check duplicate
-    if (waitlist.some((e) => e.email === email)) {
+    if (result.alreadyExists) {
       return NextResponse.json(
         { message: "You're already on the waitlist! We'll be in touch." },
         { status: 200 }
       );
     }
 
-    // Add entry
-    const entry: WaitlistEntry = {
-      email,
-      joined_at: new Date().toISOString(),
-    };
-
-    waitlist.push(entry);
-    await saveWaitlist(waitlist);
-
     return NextResponse.json(
       {
         message: "Welcome aboard! You'll be the first to know when we launch.",
-        position: waitlist.length,
+        position: result.position,
       },
       { status: 201 }
     );

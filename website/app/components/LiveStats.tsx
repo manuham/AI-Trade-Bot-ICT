@@ -1,22 +1,13 @@
 import { fetchStats } from "@/lib/api";
 
-const statCardStyle: React.CSSProperties = {
-  background: "var(--bg-card)",
-  border: "1px solid var(--border)",
-  borderRadius: 12,
-  padding: "28px 24px",
-  textAlign: "center",
-  flex: "1 1 200px",
-};
-
 export default async function LiveStats() {
   let stats;
   try {
     stats = await fetchStats();
   } catch {
     return (
-      <section id="stats" style={{ padding: "60px 1rem", textAlign: "center" }}>
-        <p style={{ color: "var(--text-secondary)" }}>
+      <section id="stats" className="py-16 px-4 text-center">
+        <p className="text-text-secondary">
           Stats temporarily unavailable — check back soon.
         </p>
       </section>
@@ -27,91 +18,53 @@ export default async function LiveStats() {
     {
       label: "Win Rate",
       value: `${stats.win_rate.toFixed(1)}%`,
-      color: stats.win_rate >= 50 ? "var(--green)" : "var(--red)",
+      color: stats.win_rate >= 50 ? "text-green" : "text-red",
     },
     {
       label: "Total P&L",
       value: `${stats.total_pnl_pips >= 0 ? "+" : ""}${stats.total_pnl_pips.toFixed(0)} pips`,
-      color: stats.total_pnl_pips >= 0 ? "var(--green)" : "var(--red)",
+      color: stats.total_pnl_pips >= 0 ? "text-green" : "text-red",
     },
     {
       label: "Trades Taken",
       value: stats.total_trades.toString(),
-      color: "var(--accent)",
+      color: "text-accent-light",
     },
     {
       label: "Avg Win",
       value: `+${stats.avg_win_pips.toFixed(1)} pips`,
-      color: "var(--green)",
+      color: "text-green",
     },
   ];
 
   return (
-    <section id="stats" style={{ padding: "60px 1rem" }}>
-      <div style={{ maxWidth: 900, margin: "0 auto" }}>
-        {/* Section label */}
-        <p
-          style={{
-            textAlign: "center",
-            fontSize: 13,
-            color: "var(--accent)",
-            fontWeight: 600,
-            letterSpacing: 1.5,
-            textTransform: "uppercase",
-            marginBottom: 8,
-          }}
-        >
-          Live Performance
-        </p>
-        <h2
-          style={{
-            textAlign: "center",
-            fontSize: "1.8rem",
-            fontWeight: 700,
-            marginBottom: 8,
-          }}
-        >
-          Verified Track Record
-        </h2>
-        <p
-          style={{
-            textAlign: "center",
-            color: "var(--text-secondary)",
-            marginBottom: 36,
-            fontSize: 15,
-          }}
-        >
-          Last {stats.period_days} days — updated every 60 seconds from our live trading server.
-        </p>
+    <section id="stats" className="py-20 px-4">
+      <div className="max-w-5xl mx-auto">
+        {/* Section header */}
+        <div className="text-center mb-12">
+          <div className="inline-flex items-center gap-2 text-accent text-xs font-semibold uppercase tracking-widest mb-3">
+            <span className="w-2 h-2 rounded-full bg-green pulse-dot" />
+            Live Performance
+          </div>
+          <h2 className="text-2xl sm:text-3xl font-bold mb-3">
+            Verified Track Record
+          </h2>
+          <p className="text-text-secondary text-sm sm:text-base">
+            Last {stats.period_days} days — updated every 60 seconds from our live trading server.
+          </p>
+        </div>
 
         {/* Stat cards */}
-        <div
-          style={{
-            display: "flex",
-            gap: 16,
-            flexWrap: "wrap",
-          }}
-        >
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {cards.map((card) => (
-            <div key={card.label} style={statCardStyle}>
-              <div
-                style={{
-                  fontSize: "2rem",
-                  fontWeight: 700,
-                  color: card.color,
-                  marginBottom: 6,
-                }}
-              >
+            <div
+              key={card.label}
+              className="bg-bg-card border border-border rounded-xl p-6 text-center card-hover"
+            >
+              <div className={`text-3xl sm:text-4xl font-bold mb-2 ${card.color}`}>
                 {card.value}
               </div>
-              <div
-                style={{
-                  fontSize: 14,
-                  color: "var(--text-secondary)",
-                  textTransform: "uppercase",
-                  letterSpacing: 1,
-                }}
-              >
+              <div className="text-text-muted text-xs font-semibold uppercase tracking-wider">
                 {card.label}
               </div>
             </div>

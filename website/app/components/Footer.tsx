@@ -1,88 +1,62 @@
+const footerLinks = [
+  { label: "Live Stats", href: "#stats" },
+  { label: "How It Works", href: "#how-it-works" },
+  { label: "Track Record", href: "#track-record" },
+  { label: "Pricing", href: "#pricing" },
+];
+
 export default function Footer() {
   return (
-    <footer
-      style={{
-        borderTop: "1px solid var(--border)",
-        padding: "40px 1rem",
-        textAlign: "center",
-      }}
-    >
-      <div style={{ maxWidth: 700, margin: "0 auto" }}>
-        {/* Links */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            gap: 24,
-            flexWrap: "wrap",
-            marginBottom: 20,
-          }}
-        >
-          <a
-            href="#stats"
-            style={{
-              color: "var(--text-secondary)",
-              textDecoration: "none",
-              fontSize: 14,
-            }}
-          >
-            Live Stats
+    <footer className="border-t border-border py-12 px-4">
+      <div className="max-w-5xl mx-auto">
+        {/* Top row */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-6 mb-8">
+          {/* Logo */}
+          <a href="#" className="flex items-center gap-2.5 no-underline">
+            <div className="w-7 h-7 rounded-md bg-accent flex items-center justify-center text-white font-bold text-xs">
+              ICT
+            </div>
+            <span className="text-text-primary font-semibold text-sm">
+              AI Trade Bot
+            </span>
           </a>
-          <a
-            href="#track-record"
-            style={{
-              color: "var(--text-secondary)",
-              textDecoration: "none",
-              fontSize: 14,
-            }}
-          >
-            Track Record
-          </a>
-          <a
-            href="#pricing"
-            style={{
-              color: "var(--text-secondary)",
-              textDecoration: "none",
-              fontSize: 14,
-            }}
-          >
-            Pricing
-          </a>
-          <a
-            href="https://t.me/ict_trade_ai_bot"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              color: "var(--text-secondary)",
-              textDecoration: "none",
-              fontSize: 14,
-            }}
-          >
-            Telegram
-          </a>
+
+          {/* Links */}
+          <div className="flex items-center gap-6 flex-wrap justify-center">
+            {footerLinks.map((link) => (
+              <a
+                key={link.href}
+                href={link.href}
+                className="text-text-muted text-sm no-underline hover:text-text-secondary transition-colors duration-200"
+              >
+                {link.label}
+              </a>
+            ))}
+            <a
+              href="https://t.me/ict_trade_ai_bot"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-text-muted text-sm no-underline hover:text-text-secondary transition-colors duration-200"
+            >
+              Telegram
+            </a>
+          </div>
         </div>
 
-        {/* Disclaimer */}
-        <p
-          style={{
-            fontSize: 12,
-            color: "var(--text-secondary)",
-            lineHeight: 1.6,
-            maxWidth: 560,
-            margin: "0 auto 16px",
-            opacity: 0.7,
-          }}
-        >
-          Trading forex involves significant risk. Past performance does not guarantee
-          future results. AI Trade Bot ICT provides analysis, not financial advice.
-          Always do your own research and never trade with money you cannot afford
-          to lose.
-        </p>
+        {/* Divider */}
+        <div className="border-t border-border/50 pt-8">
+          {/* Disclaimer */}
+          <p className="text-text-muted text-xs leading-relaxed max-w-2xl mx-auto text-center mb-4">
+            Trading forex involves significant risk. Past performance does not guarantee
+            future results. AI Trade Bot ICT provides analysis, not financial advice.
+            Always do your own research and never trade with money you cannot afford to lose.
+          </p>
 
-        {/* Copyright */}
-        <p style={{ fontSize: 13, color: "var(--text-secondary)", opacity: 0.5 }}>
-          &copy; {new Date().getFullYear()} AI Trade Bot ICT. All rights reserved.
-        </p>
+          {/* Copyright */}
+          <p className="text-center text-text-muted/50 text-xs">
+            &copy; {new Date().getFullYear()} AI Trade Bot ICT. All rights reserved.
+          </p>
+        </div>
       </div>
     </footer>
   );

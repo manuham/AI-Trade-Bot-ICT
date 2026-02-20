@@ -1,104 +1,60 @@
 export default function Hero() {
   return (
-    <section
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        textAlign: "center",
-        padding: "2rem 1rem",
-        background:
-          "radial-gradient(ellipse at 50% 0%, rgba(59,130,246,0.15) 0%, transparent 60%)",
-      }}
-    >
-      <div style={{ maxWidth: 720 }}>
+    <section className="relative min-h-screen flex items-center justify-center text-center px-4 pt-20 overflow-hidden">
+      {/* Background gradient effects */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-accent/10 rounded-full blur-[120px]" />
+        <div className="absolute bottom-0 left-1/4 w-[400px] h-[400px] bg-accent/5 rounded-full blur-[100px]" />
+      </div>
+
+      <div className="relative z-10 max-w-3xl mx-auto animate-fade-in-up">
         {/* Badge */}
-        <div
-          style={{
-            display: "inline-block",
-            padding: "6px 16px",
-            borderRadius: 999,
-            border: "1px solid var(--border)",
-            fontSize: 13,
-            color: "var(--text-secondary)",
-            marginBottom: 24,
-            letterSpacing: "0.5px",
-          }}
-        >
-          🤖 Powered by Claude AI &amp; ICT Methodology
+        <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-border bg-bg-card/50 text-text-secondary text-xs font-medium tracking-wide mb-8">
+          <span className="w-2 h-2 rounded-full bg-green pulse-dot" />
+          Powered by Claude AI &amp; ICT Methodology
         </div>
 
         {/* Headline */}
-        <h1
-          style={{
-            fontSize: "clamp(2.2rem, 5vw, 3.5rem)",
-            fontWeight: 700,
-            lineHeight: 1.15,
-            marginBottom: 20,
-          }}
-        >
+        <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold leading-tight mb-6 tracking-tight">
           AI-Powered Forex Signals
           <br />
-          <span style={{ color: "var(--accent)" }}>With Full Transparency</span>
+          <span className="gradient-text">With Full Transparency</span>
         </h1>
 
         {/* Sub-headline */}
-        <p
-          style={{
-            fontSize: "clamp(1rem, 2vw, 1.2rem)",
-            color: "var(--text-secondary)",
-            lineHeight: 1.7,
-            marginBottom: 36,
-            maxWidth: 560,
-            marginLeft: "auto",
-            marginRight: "auto",
-          }}
-        >
-          Every trade is shown — wins <strong style={{ color: "var(--green)" }}>AND</strong>{" "}
-          losses. No cherry-picking. Our AI analyzes D1→M5 structure using ICT
+        <p className="text-text-secondary text-base sm:text-lg leading-relaxed mb-10 max-w-xl mx-auto">
+          Every trade shown — wins{" "}
+          <span className="text-green font-semibold">AND</span> losses. No
+          cherry-picking. Our AI analyzes D1 to M5 structure using ICT
           methodology and delivers setups straight to your Telegram.
         </p>
 
         {/* CTA buttons */}
-        <div
-          style={{
-            display: "flex",
-            gap: 16,
-            justifyContent: "center",
-            flexWrap: "wrap",
-          }}
-        >
+        <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
           <a
-            href="#pricing"
-            style={{
-              padding: "14px 32px",
-              background: "var(--accent)",
-              color: "#fff",
-              borderRadius: 8,
-              fontWeight: 600,
-              fontSize: 16,
-              textDecoration: "none",
-              transition: "background 0.2s",
-            }}
+            href="#waitlist"
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-accent hover:bg-accent-hover text-white font-semibold rounded-xl text-base no-underline transition-all duration-200 glow-accent"
           >
             Join Waitlist
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="mt-px">
+              <path d="M3 8h10m0 0L9 4m4 4L9 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
           </a>
           <a
             href="#track-record"
-            style={{
-              padding: "14px 32px",
-              border: "1px solid var(--border)",
-              color: "var(--text-primary)",
-              borderRadius: 8,
-              fontWeight: 600,
-              fontSize: 16,
-              textDecoration: "none",
-              transition: "border-color 0.2s",
-            }}
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-3.5 border border-border hover:border-border-light text-text-primary font-semibold rounded-xl text-base no-underline transition-all duration-200"
           >
-            View Track Record ↓
+            View Track Record
           </a>
+        </div>
+
+        {/* Trust indicators */}
+        <div className="mt-12 flex flex-wrap justify-center gap-6 sm:gap-10 text-text-muted text-xs font-medium uppercase tracking-wider">
+          <span>Multi-Pair Trading</span>
+          <span className="hidden sm:inline text-border">|</span>
+          <span>12-Point ICT Checklist</span>
+          <span className="hidden sm:inline text-border">|</span>
+          <span>M1 Entry Confirmation</span>
         </div>
       </div>
     </section>
