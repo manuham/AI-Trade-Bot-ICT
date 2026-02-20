@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
-import { API_URL, swrFetcher, PublicTrade } from "@/lib/api";
+import { CLIENT_API_URL, swrFetcher, PublicTrade } from "@/lib/api";
 import AnimatedSection from "./AnimatedSection";
 
 interface DataPoint {
@@ -16,7 +16,7 @@ export default function EquityCurve() {
   const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string; value: string } | null>(null);
 
   const { data } = useSWR<{ trades: PublicTrade[] }>(
-    `${API_URL}/public/trades?limit=100`,
+    `${CLIENT_API_URL}/public/trades?limit=100`,
     swrFetcher,
     { refreshInterval: 60000 }
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import { API_URL, swrFetcher, PublicTrade } from "@/lib/api";
+import { CLIENT_API_URL, swrFetcher, PublicTrade } from "@/lib/api";
 
 function formatTimeAgo(dateStr: string): string {
   const now = new Date();
@@ -20,7 +20,7 @@ function formatTimeAgo(dateStr: string): string {
 
 export default function TradeTable() {
   const { data, error, isLoading } = useSWR<{ trades: PublicTrade[] }>(
-    `${API_URL}/public/trades?limit=20`,
+    `${CLIENT_API_URL}/public/trades?limit=20`,
     swrFetcher,
     { refreshInterval: 30000 }
   );
