@@ -765,9 +765,20 @@ async def analyze_charts_full(
             response = await stream.get_final_message()
 
         raw_text = ""
+        thinking_text = ""
         for block in response.content:
             if hasattr(block, "text") and block.text is not None:
                 raw_text += block.text
+            # Capture extended thinking output for audit trail
+            if hasattr(block, "thinking") and block.thinking is not None:
+                thinking_text += block.thinking
+
+        # Log thinking summary (first 500 chars) for debugging/audit
+        if thinking_text:
+            logger.info("[%s] Opus thinking (%d chars): %s%s",
+                        symbol, len(thinking_text),
+                        thinking_text[:500],
+                        "..." if len(thinking_text) > 500 else "")
 
         # Log token usage for cost tracking
         usage = response.usage

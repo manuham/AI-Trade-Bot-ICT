@@ -64,7 +64,35 @@ _watch_trades: dict[str, WatchTrade] = {}               # {"GBPJPY": WatchTrade(
 PENDING_TRADE_TTL_SECONDS = 60
 
 # Auto-queue: minimum checklist score to auto-watch (skip Execute button)
-AUTO_QUEUE_MIN_CHECKLIST = 7
+AUTO_QUEUE_MIN_CHECKLIST = 7   # Default; adjusted dynamically by _get_dynamic_threshold()
+
+
+def _get_dynamic_threshold(symbol: str) -> int:
+    """Adjust auto-queue threshold based on recent win rate.
+
+    If the system is winning consistently, we can be slightly more aggressive (lower
+    threshold to 6). If it's losing, tighten up (raise to 8). This creates a natural
+    feedback loop: good performance → more trades → more data → better learning.
+
+    Returns 6, 7, or 8.
+    """
+    try:
+        from trade_tracker import get_recent_closed_for_pair
+        recent = get_recent_closed_for_pair(symbol, limit=20)
+        if len(recent) < 10:
+            return AUTO_QUEUE_MIN_CHECKLIST  # Not enough data, use default
+
+        wins = sum(1 for t in recent if t.get("outcome") in ("full_win", "partial_win"))
+        win_rate = wins / len(recent) * 100
+
+        if win_rate >= 65:
+            return 6   # Winning well → allow slightly lower-score setups
+        elif win_rate < 40:
+            return 8   # Losing streak → only take high-confidence setups
+        else:
+            return AUTO_QUEUE_MIN_CHECKLIST  # Normal → default 7
+    except Exception:
+        return AUTO_QUEUE_MIN_CHECKLIST
 
 
 def queue_pending_trade(trade: PendingTrade):
@@ -139,9 +167,13 @@ async def _run_analysis(
 
         # --- Auto-queue qualifying setups as watch trades ---
         auto_queued_indices: set[int] = set()
+        dynamic_threshold = _get_dynamic_threshold(symbol)
+        if dynamic_threshold != AUTO_QUEUE_MIN_CHECKLIST:
+            logger.info("[%s] Dynamic auto-queue threshold: %d (default: %d)",
+                        symbol, dynamic_threshold, AUTO_QUEUE_MIN_CHECKLIST)
         for i, setup in enumerate(result.setups):
             checklist_num = _parse_checklist_score(setup.checklist_score)
-            if checklist_num >= AUTO_QUEUE_MIN_CHECKLIST:
+            if checklist_num >= dynamic_threshold:
                 # Run risk filters before auto-queuing
                 from telegram_bot import check_risk_filters
                 passed, reason = await check_risk_filters(symbol, setup)
@@ -177,8 +209,10 @@ def _parse_checklist_score(score: str) -> int:
 
 def _create_watch_trade(symbol: str, setup) -> WatchTrade:
     """Create a WatchTrade from a TradeSetup."""
-    # Adaptive TP1 close %: high confidence → let more ride, low → take profit early
+    # Adaptive TP1 close %: combines checklist confidence + market volatility
     checklist_num = _parse_checklist_score(setup.checklist_score)
+
+    # Base TP1 % from checklist score
     if checklist_num >= 10:
         tp1_pct = 40.0  # HIGH (10-12): close less at TP1, let 60% ride to TP2
     elif checklist_num >= 8:
@@ -187,6 +221,26 @@ def _create_watch_trade(symbol: str, setup) -> WatchTrade:
         tp1_pct = 55.0  # MEDIUM (6-7): balanced
     else:
         tp1_pct = 60.0  # LOW (4-5): take more profit at TP1
+
+    # Volatility adjustment: on high-volatility days, take more profit at TP1
+    # (wider ATR = higher chance of reversal before TP2)
+    # On low-volatility days, let more ride (tighter range = more likely to reach TP2)
+    md = shared_state.last_market_data.get(symbol)
+    if md and md.atr_d1 > 0:
+        # Compare current ATR to typical ranges:
+        # GBPJPY typical D1 ATR: ~150p, EURUSD: ~60p, XAUUSD: ~300p
+        # Use sl_pips as a proxy for pair scale
+        atr_ratio = md.atr_d1 / max(setup.sl_pips * 3, 1)  # ATR vs ~3x SL as baseline
+        if atr_ratio > 2.0:
+            # Very high volatility: add 5% to TP1 close (take more profit)
+            tp1_pct = min(65.0, tp1_pct + 5.0)
+            logger.debug("[%s] High volatility (ATR_D1=%.0f, ratio=%.1f) → TP1%%=%.0f",
+                         symbol, md.atr_d1, atr_ratio, tp1_pct)
+        elif atr_ratio < 1.0:
+            # Low volatility: subtract 5% from TP1 close (let more ride)
+            tp1_pct = max(35.0, tp1_pct - 5.0)
+            logger.debug("[%s] Low volatility (ATR_D1=%.0f, ratio=%.1f) → TP1%%=%.0f",
+                         symbol, md.atr_d1, atr_ratio, tp1_pct)
 
     return WatchTrade(
         id=uuid.uuid4().hex[:8],

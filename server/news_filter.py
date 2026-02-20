@@ -24,8 +24,28 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
-BUFFER_MINUTES = 2          # FTMO default: 2 minutes before & after
-WARN_AHEAD_MINUTES = 30     # Show warning on setups if news within 30 min
+BUFFER_MINUTES = 2          # FTMO minimum: 2 minutes before & after (fallback)
+WARN_AHEAD_MINUTES = 60     # Show warning on setups if news within 60 min
+
+# Tiered buffer by event importance — critical events get wider windows
+# Title keywords that trigger the extended buffer (case-insensitive match)
+_CRITICAL_KEYWORDS = {
+    "federal funds rate", "fomc", "non-farm", "nonfarm", "nfp",
+    "cpi ", "consumer price index",
+    "official bank rate", "boe interest", "ecb interest", "boj interest",
+    "monetary policy", "interest rate decision",
+}
+_CRITICAL_BUFFER_MINUTES = 15   # FOMC, NFP, CPI, central bank rate decisions
+_HIGH_BUFFER_MINUTES = 5        # Other high-impact (PMI, GDP, employment, retail sales)
+
+
+def _get_event_buffer(event_title: str) -> int:
+    """Return the appropriate buffer in minutes based on event importance."""
+    title_lower = event_title.lower()
+    for keyword in _CRITICAL_KEYWORDS:
+        if keyword in title_lower:
+            return _CRITICAL_BUFFER_MINUTES
+    return _HIGH_BUFFER_MINUTES
 CACHE_TTL_HOURS = 6         # Re-fetch calendar every 6 hours
 
 # ---------------------------------------------------------------------------
@@ -140,27 +160,31 @@ async def check_news_restriction(
         delta = event_time - now
         abs_delta = abs(delta)
 
-        # Check if within the restricted window (buffer before & after)
-        buffer = timedelta(minutes=buffer_minutes)
+        # Tiered buffer: critical events (FOMC, NFP, CPI) get wider windows
+        event_title = event.get("title", "Unknown")
+        effective_buffer = _get_event_buffer(event_title)
+        buffer = timedelta(minutes=effective_buffer)
+
         if abs_delta <= buffer:
             minutes_until = int(delta.total_seconds() / 60)
-            block_ends = event_time + timedelta(minutes=buffer_minutes)
+            block_ends = event_time + timedelta(minutes=effective_buffer)
             block_ends_mez = block_ends + timedelta(hours=1)  # UTC → MEZ
             ends_in_min = max(1, int((block_ends - now).total_seconds() / 60))
+            tier_label = "CRITICAL" if effective_buffer >= _CRITICAL_BUFFER_MINUTES else "HIGH"
             return NewsCheckResult(
                 blocked=True,
                 warning=True,
-                event_title=event.get("title", "Unknown"),
+                event_title=event_title,
                 event_currency=event_currency,
                 event_time=event_time,
                 minutes_until=minutes_until,
                 block_ends_at=block_ends,
                 message=(
-                    f"BLOCKED: {event_currency} high-impact news "
-                    f"\"{event.get('title', '')}\" "
+                    f"BLOCKED [{tier_label}]: {event_currency} news "
+                    f"\"{event_title}\" "
                     f"{'in ' + str(abs(minutes_until)) + ' min' if minutes_until > 0 else str(abs(minutes_until)) + ' min ago'}. "
-                    f"FTMO restricts trading {buffer_minutes} min before/after. "
-                    f"Restriction ends at {block_ends_mez.strftime('%H:%M')} MEZ (~{ends_in_min} min)."
+                    f"Restriction: ±{effective_buffer} min. "
+                    f"Ends at {block_ends_mez.strftime('%H:%M')} MEZ (~{ends_in_min} min)."
                 ),
             )
 
@@ -175,17 +199,20 @@ async def check_news_restriction(
     # No blocking, but maybe a warning
     if closest_event and closest_delta:
         minutes_until = int(closest_delta.total_seconds() / 60)
+        event_title = closest_event.get("title", "Unknown")
+        effective_buffer = _get_event_buffer(event_title)
         return NewsCheckResult(
             blocked=False,
             warning=True,
-            event_title=closest_event.get("title", "Unknown"),
+            event_title=event_title,
             event_currency=closest_event.get("country", ""),
             event_time=_parse_event_time(closest_event.get("date", "")),
             minutes_until=minutes_until,
             message=(
-                f"High-impact {closest_event.get('country', '')} news "
-                f"\"{closest_event.get('title', '')}\" in {minutes_until} min. "
-                f"Trade will be blocked within {buffer_minutes} min of release."
+                f"{'CRITICAL' if effective_buffer >= _CRITICAL_BUFFER_MINUTES else 'High-impact'} "
+                f"{closest_event.get('country', '')} news "
+                f"\"{event_title}\" in {minutes_until} min. "
+                f"Trade will be blocked ±{effective_buffer} min of release."
             ),
         )
 
