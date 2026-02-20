@@ -475,34 +475,40 @@ def log_trade_closed(
         elif close_reason == "cancelled":
             pass
 
-        # Determine if trade is fully closed
+        # Current state including this update
         tp1_hit = updates.get("tp1_hit", trade["tp1_hit"])
         tp2_hit = updates.get("tp2_hit", trade["tp2_hit"])
         sl_hit = updates.get("sl_hit", trade["sl_hit"])
 
-        # Trade is closed if SL hit OR both TPs resolved
-        is_closed = sl_hit or (tp1_hit and tp2_hit)
+        # --- Always update pnl_pips progressively (not just on final close) ---
+        # This ensures the website shows partial P&L while runner is still active
+        if close_reason == "tp1":
+            updates["pnl_pips"] = trade.get("tp1_pips") or 0
+        elif close_reason == "tp2":
+            # Full win — both TPs hit
+            updates["pnl_pips"] = (trade.get("tp1_pips") or 0) + (trade.get("tp2_pips") or 0)
+        elif close_reason == "sl":
+            if tp1_hit:
+                # Runner hit BE/SL after TP1 — partial win, keep TP1 pips
+                updates["pnl_pips"] = trade.get("tp1_pips") or 0
+            else:
+                # Pure SL hit — loss
+                updates["pnl_pips"] = -(trade.get("sl_pips") or 0)
+        elif close_reason == "cancelled":
+            updates["pnl_pips"] = 0
 
-        if close_reason == "cancelled":
-            is_closed = True
+        # --- Determine if trade is fully closed ---
+        is_closed = sl_hit or (tp1_hit and tp2_hit) or close_reason == "cancelled"
 
         if is_closed:
-            # Calculate pip P&L
-            entry = trade["actual_entry"] or ((trade["entry_min"] + trade["entry_max"]) / 2)
+            # Set final outcome
             if sl_hit and not tp1_hit and not tp2_hit:
-                updates["pnl_pips"] = -trade["sl_pips"]
                 updates["outcome"] = "loss"
             elif tp1_hit and tp2_hit:
-                updates["pnl_pips"] = trade["tp1_pips"] + trade["tp2_pips"]
                 updates["outcome"] = "full_win"
             elif tp1_hit and sl_hit:
-                # TP1 hit then SL hit on runner — partial win
-                # After TP1, EA moves runner SL to breakeven, so runner loss = 0 pips
-                # Net P&L = TP1 profit only (runner closed at entry = 0 pips)
-                updates["pnl_pips"] = trade["tp1_pips"]
                 updates["outcome"] = "partial_win"
             elif close_reason == "cancelled":
-                updates["pnl_pips"] = 0
                 updates["outcome"] = "cancelled"
             else:
                 updates["outcome"] = "closed"
